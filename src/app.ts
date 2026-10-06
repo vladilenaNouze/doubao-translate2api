@@ -71,10 +71,10 @@ export function createApp(config: Config, options: { fetcher?: Fetch; logger?: F
     ...(request.url.split("?")[0] === "/v1/messages" ? { type: "error" } : {}),
     error: { type: "invalid_request_error", message: "Route not found.", code: "not_found" },
   }));
-  app.get("/", async () => ({ name: "doubao-translate2api", version: "0.1.2", status: "ok" }));
+  app.get("/", async () => ({ name: "doubao-translate2api", version: "0.1.3", status: "ok" }));
   app.get("/health", async () => ({ status: "ok" }));
   app.get("/info", async () => ({
-    name: "doubao-translate2api", version: "0.1.2",
+    name: "doubao-translate2api", version: "0.1.3",
     protocols: ["openai-chat", "openai-responses", "anthropic"],
     models: models.map(x => x.id), supported_languages: languages,
     default_target_lang: settings.defaultTargetLang,

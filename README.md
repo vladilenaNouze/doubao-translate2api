@@ -29,7 +29,7 @@
 
 ## Docker 部署
 
-镜像：`muzileee/doubao-translate2api:latest`，当前版本 `0.1.2`，支持 AMD64 / ARM64。
+镜像：`muzileee/doubao-translate2api:latest`，当前版本 `0.1.3`，支持 AMD64 / ARM64。
 
 1. 将 [docker-compose.nas.yml](docker-compose.nas.yml) 保存为项目目录中的 `docker-compose.yml`，或粘贴到 NAS 的 Compose 创建窗口。
 2. 在项目目录创建 `data/admin`，确保容器用户有写入权限。
@@ -125,7 +125,7 @@ docker compose pull
 docker compose up -d
 ```
 
-运行中的容器不会自行升级。需要定时更新时，可在 NAS 任务计划中定期运行上述命令；保留 `data/admin` 目录即可保留账号、密码、API Key 和默认语言。需要固定版本时，将镜像标签改为 `0.1.2`。
+运行中的容器不会自行升级。需要定时更新时，可在 NAS 任务计划中定期运行上述命令；保留 `data/admin` 目录即可保留账号、密码、API Key 和默认语言。需要固定版本时，将镜像标签改为 `0.1.3`。
 
 自动生成的 Key 在 `data/admin/api-key.txt`，权限为 `600`。文件损坏或不可读会拒绝启动；不会自动替换。修改管理密码会退出所有管理会话，但不会改变 API Key。
 
@@ -143,4 +143,4 @@ DOUBAO_COOKIE_FILE=./data/cookie.txt npm run dev
 
 本地管理页：`http://127.0.0.1:8000/admin`。浏览器测试运行 `npm run test:ui`，首次需 `npx playwright install chromium`。CI 包含协议 SDK、浏览器和 Docker 检查；模拟测试通过不代表真实豆包或 Magpie 验收完成。
 
-发布时推送与 `package.json` 版本一致的标签，例如 `v0.1.2`。GitHub Actions 检查通过后自动上传双架构镜像；需要配置 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN` Secrets。
+发布时推送与 `package.json` 版本一致的标签，例如 `v0.1.3`。GitHub Actions 检查通过后自动上传双架构镜像；需要配置 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN` Secrets。
