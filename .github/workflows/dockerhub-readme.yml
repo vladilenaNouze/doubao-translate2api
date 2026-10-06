@@ -1,0 +1,30 @@
+name: Sync Docker Hub README
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - dockerhub/README.md
+      - .github/workflows/dockerhub-readme.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dockerhub-readme
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update Docker Hub description
+        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: muzileee/doubao-translate2api
+          short-description: Doubao translation API for Docker/NAS. OpenAI/Anthropic compatible; Magpie plugin available.
+          readme-filepath: dockerhub/README.md

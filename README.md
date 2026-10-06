@@ -16,6 +16,22 @@
 
 仅提供文本翻译，不是通用聊天模型。
 
+## 项目入口
+
+| 入口 | 用途 |
+| --- | --- |
+| [API 服务源码与部署文档](https://github.com/mu-zi-lee/doubao-translate2api) | 在 NAS 或服务器部署，向多个翻译客户端提供兼容 API |
+| [Docker Hub 镜像](https://hub.docker.com/r/muzileee/doubao-translate2api) | 拉取 `muzileee/doubao-translate2api` 部署 API 服务 |
+| [Magpie 直连插件](https://github.com/mu-zi-lee/opencode-doubao-translate) | 在 Magpie 中导入豆包 Cookie，直接翻译，无须部署 API 服务或 Docker |
+
+服务版和插件版共用翻译核心，可按使用场景选择。服务版提供管理页、Cookie 池和 API Key；插件版由 Magpie 管理账号与故障切换。
+
+只在 Magpie 中使用时，在「插件 → 发现」底部安装框填写以下内容，安装后选择 **Import Doubao Cookie**：
+
+```text
+github:mu-zi-lee/opencode-doubao-translate
+```
+
 ![深色管理页面：翻译统计与运行概览](assets/admin-overview.png)
 
 <details>
@@ -29,7 +45,7 @@
 
 ## Docker 部署
 
-镜像：`muzileee/doubao-translate2api:latest`，当前版本 `0.1.3`，支持 AMD64 / ARM64。
+镜像：[muzileee/doubao-translate2api](https://hub.docker.com/r/muzileee/doubao-translate2api)，标签 `latest`，当前版本 `0.1.3`，支持 AMD64 / ARM64。
 
 1. 将 [docker-compose.nas.yml](docker-compose.nas.yml) 保存为项目目录中的 `docker-compose.yml`，或粘贴到 NAS 的 Compose 创建窗口。
 2. 在项目目录创建 `data/admin`，确保容器用户有写入权限。
