@@ -61,6 +61,9 @@ export class AccountPool {
   private pending: Promise<unknown> = Promise.resolve();
   private cursor = 0;
   private path: string;
+  private dirty = false;
+  private storageError = false;
+  get runtimePersistence() { return this.storageError ? "error" : this.dirty ? "pending" : "saved"; }
   constructor(private config: Config) { this.path = join(config.ADMIN_DATA_DIR, "accounts.json"); }
   async initialize() {
     try {
@@ -83,13 +86,28 @@ export class AccountPool {
       await writePrivate(this.path, JSON.stringify(this.state));
     }
   }
-  private mutate<T>(fn: (state: State) => T): Promise<T> {
+  private mutate<T>(fn: (state: State) => T, persist = true): Promise<T> {
     const task = this.pending.then(async () => {
       const state = structuredClone(this.state);
       const result = fn(state);
-      await writePrivate(this.path, JSON.stringify(state));
+      if (persist) {
+        await writePrivate(this.path, JSON.stringify(state));
+        this.storageError = false;
+      }
       this.state = state;
+      this.dirty = !persist;
       return result;
+    });
+    this.pending = task.catch(() => {});
+    return task;
+  }
+  flush() {
+    const task = this.pending.then(async () => {
+      if (!this.dirty) return;
+      try { await writePrivate(this.path, JSON.stringify(this.state)); }
+      catch (error) { this.storageError = true; throw error; }
+      this.storageError = false;
+      this.dirty = false;
     });
     this.pending = task.catch(() => {});
     return task;
@@ -200,7 +218,7 @@ export class AccountPool {
       account.lastUsedAt = Date.now();
       account.health = { status: "valid", checkedAt: Date.now(), cooldownUntil: 0 };
       if (state.mode === "failover") state.activeId = id;
-    });
+    }, false);
   }
   async failed(id: string, error: ServiceError, revision?: string) {
     await this.mutate(state => {
@@ -212,7 +230,7 @@ export class AccountPool {
         status: permanent ? "invalid" : "cooldown", reason: error.code, checkedAt: Date.now(),
         cooldownUntil: permanent ? 0 : Date.now() + 60000,
       };
-    });
+    }, false);
   }
   async probe(id: string, inspect: (provider: CookieProvider) => Promise<ProbeResult>) {
     await this.refreshFile();

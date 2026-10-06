@@ -146,6 +146,21 @@ describe("default translation language management", () => {
 });
 
 describe("cookie management and scheduling", () => {
+  it("keeps successful runtime updates independent of storage errors and flushes on close", async () => {
+    const { config } = await setup();
+    const pool = new AccountPool(config); await pool.initialize();
+    const lease = await pool.choose();
+    const path = join(config.ADMIN_DATA_DIR, "accounts.json");
+    await rm(path); await mkdir(path);
+    await expect(pool.succeeded(lease.id, lease.revision)).resolves.toBeUndefined();
+    expect((await pool.list()).accounts[0]?.health.status).toBe("valid");
+    await expect(pool.flush()).rejects.toMatchObject({ code: "admin_storage_error" });
+    expect(pool.runtimePersistence).toBe("error");
+    await rm(path, { recursive: true });
+    await pool.flush();
+    expect(pool.runtimePersistence).toBe("saved");
+    expect(JSON.parse(await readFile(path, "utf8")).accounts[0].health.status).toBe("valid");
+  });
   it("imports exported JSON, filters domains and never returns cookie values", async () => {
     const { request, adminDir } = await setup();
     const entries = ["sessionid", "sid_tt", "uid_tt"].map(name => ({ name, value: "managed-cookie-secret", domain: ".doubao.com" }));
@@ -239,5 +254,59 @@ describe("cookie management and scheduling", () => {
   it("accepts Cookie header labels but rejects unsafe exports", () => {
     expect(importCookie("Cookie: " + cookie("header")).complete).toBe(true);
     expect(() => importCookie(JSON.stringify([{ name: "sessionid", value: "x;y" }]))).toThrow();
+  });
+});
+
+describe("translation usage and management test", () => {
+  it("counts requests once, counts multi-batch calls separately, and protects statistics", async () => {
+    const { app, request, translate, config, adminDir } = await setup();
+    const text = Array.from({ length: 51 }, (_, i) => `private paragraph ${i}`).join("\n\n");
+    expect((await translate(text)).statusCode).toBe(200);
+    const usage = (await request("/usage")).json();
+    expect(usage.today).toMatchObject({ requests: 1, succeeded: 1, upstreamCalls: 2, retries: 0 });
+    expect(usage.concurrency).toMatchObject({ active: 0, queued: 0 });
+    expect((await app.inject({ url: "/admin/api/usage", headers: { "x-api-key": "client-key" } })).statusCode).toBe(401);
+    expect((await request("/translate", "POST", { text: "private test text", model: "doubao-ai", targetLang: "zh" })).json().text).toBe("译:private test text");
+    expect((await request("/usage")).json().today.requests).toBe(2);
+    await app.close();
+    const stored = await readFile(join(adminDir, "usage.json"), "utf8");
+    expect(stored).not.toContain("private");
+    const restarted = createApp(config);
+    cleanup.push(() => restarted.close()); await restarted.ready();
+    const { UsageStore } = await import("../../src/admin/usage.js");
+    const reader = new UsageStore(adminDir, () => {});
+    await reader.initialize();
+    expect(reader.snapshot().today?.requests).toBe(2);
+  });
+  it("records failover separately and records sanitized failures", async () => {
+    const { request, add, translate, mock } = await setup({ mode: "expired" });
+    await add();
+    expect((await translate()).statusCode).toBe(200);
+    expect((await request("/usage")).json().today).toMatchObject({ requests: 1, upstreamCalls: 2, retries: 1, switches: 1 });
+    mock.state.scenario = "json-scene-error";
+    expect((await translate("secret-body")).statusCode).toBe(502);
+    const result = await request("/usage");
+    expect(result.json().today).toMatchObject({ requests: 2, succeeded: 1, failed: 1 });
+    expect(result.json().failures[0].code).toBe("upstream_bad_request");
+    expect(result.body).not.toContain("secret-body");
+    expect(result.body).not.toContain("sensitive");
+  });
+  it("requires management CSRF for translation tests", async () => {
+    const { app, session, request } = await setup();
+    for (const headers of [{ cookie: session.headers.cookie }, { ...session.headers, origin: "https://attacker.example" }]) {
+      expect((await app.inject({ method: "POST", url: "/admin/api/translate", headers,
+        payload: { text: "hello", model: "doubao-ai", targetLang: "zh" } })).statusCode).toBe(403);
+    }
+    expect((await request("/usage")).json().today).toBeNull();
+  });
+  it("bounds the entire translation including upstream wait", async () => {
+    const { config, mock } = await setup();
+    mock.state.scenario = "slow-response";
+    const app = createApp({ ...config, ADMIN_ENABLED: false, DOUBAO_TOTAL_TIMEOUT_MS: 20 }, { fetcher: mock.fetcher });
+    cleanup.push(() => app.close()); await app.ready();
+    const response = await app.inject({ method: "POST", url: "/v1/responses", headers: { "x-api-key": "client-key" },
+      payload: { model: "doubao-ai", input: "hello", target_lang: "zh" } });
+    expect(response.statusCode).toBe(504);
+    expect(response.json().error.code).toBe("translation_timeout");
   });
 });

@@ -15,6 +15,8 @@ import type { Translator } from "../core/translator.js";
 import type { CookieProvider } from "../auth/cookie-store.js";
 import type { ApiKeyStore } from "../auth/api-key-store.js";
 import type { TranslationSettings } from "./translation-settings.js";
+import type { UsageStore } from "./usage.js";
+import { adaptRequest } from "../protocols/adapter.js";
 
 const fields = z.object({ name: z.string().trim().min(1).max(64), cookie: z.string().min(1).max(131072) });
 const update = fields.partial().extend({ enabled: z.boolean().optional() }).refine(x => Object.keys(x).length > 0);
@@ -25,7 +27,7 @@ function validate<T>(schema: z.ZodType<T>, body: unknown): T {
   return result.data;
 }
 export function registerAdmin(app: FastifyInstance, config: Config, pool: AccountPool, translator: Translator,
-  signalFor: (id: string) => AbortSignal, apiKeys: ApiKeyStore, settings: TranslationSettings) {
+  signalFor: (id: string) => AbortSignal, apiKeys: ApiKeyStore, settings: TranslationSettings, usage: UsageStore) {
   app.register(async admin => {
     await pool.initialize();
     const credentials = new AdminCredentials(config);
@@ -60,7 +62,7 @@ export function registerAdmin(app: FastifyInstance, config: Config, pool: Accoun
     const uiDir = fileURLToPath(new URL("../../dist/ui/", import.meta.url));
     admin.get("/admin", async (_request, reply) => {
       reply.type("text/html").header("Content-Security-Policy",
-        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+        "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
       return readFile(join(uiDir, "index.html"), "utf8");
     });
     admin.get("/admin/", async (_request, reply) => reply.redirect("/admin"));
@@ -83,6 +85,15 @@ export function registerAdmin(app: FastifyInstance, config: Config, pool: Accoun
       return { csrf: request.session.csrf };
     });
     admin.get("/admin/api/session", async request => ({ csrf: request.session.csrf }));
+    admin.get("/admin/api/usage", async () => ({
+      ...usage.snapshot(), concurrency: translator.semaphore.status, accountPersistence: pool.runtimePersistence,
+    }));
+    admin.post("/admin/api/translate", async request => {
+      const input = validate(z.object({ text: z.string().trim().min(1).max(10000), model: z.string(), targetLang: z.string() }), request.body);
+      const adapted = adaptRequest("openai-chat", { model: input.model, target_lang: input.targetLang,
+        messages: [{ role: "user", content: input.text }] }, undefined, config.DOUBAO_DEFAULT_SCENE, request.id, settings.defaultTargetLang);
+      return translator.translate(adapted.canonical, signalFor(request.id));
+    });
     admin.get("/admin/api/settings/translation", async () => settings.metadata);
     admin.put("/admin/api/settings/translation", async request =>
       settings.update(validate(z.object({ targetLang: z.string().min(1) }), request.body).targetLang));

@@ -15,6 +15,7 @@ import { registerAdmin } from "./admin/routes.js";
 import { ApiKeyStore } from "./auth/api-key-store.js";
 import { listModels } from "./protocols/model-list.js";
 import { TranslationSettings } from "./admin/translation-settings.js";
+import { UsageStore } from "./admin/usage.js";
 
 export function createApp(config: Config, options: { fetcher?: Fetch; logger?: FastifyServerOptions["logger"] } = {}) {
   const app = Fastify({
@@ -31,8 +32,18 @@ export function createApp(config: Config, options: { fetcher?: Fetch; logger?: F
   const pool = config.ADMIN_ENABLED ? new AccountPool(config) : undefined;
   const apiKeys = new ApiKeyStore(config);
   const settings = new TranslationSettings(config);
-  app.addHook("onReady", async () => { await apiKeys.initialize(); await settings.initialize(); });
-  const translator = new Translator(config, client, pool);
+  const usage = new UsageStore(config.ADMIN_DATA_DIR, () => app.log.warn({ code: "usage_storage_error" }, "Usage storage unavailable"));
+  let storageTimer: ReturnType<typeof setInterval> | undefined;
+  const flush = async () => {
+    await usage.flush();
+    await pool?.flush().catch(() => app.log.warn({ code: "account_state_storage_error" }, "Account runtime state could not be saved"));
+  };
+  app.addHook("onReady", async () => {
+    await apiKeys.initialize(); await settings.initialize(); await usage.initialize();
+    storageTimer = setInterval(() => { void flush(); }, 10000); storageTimer.unref();
+  });
+  app.addHook("onClose", async () => { clearInterval(storageTimer); await flush(); });
+  const translator = new Translator(config, client, pool, usage);
   const controllers = new Map<string, AbortController>();
   if (config.ALLOW_NO_AUTH) app.log.warn("API authentication is disabled.");
   if (config.CORS_ORIGINS) app.register(cors, {
@@ -91,7 +102,7 @@ export function createApp(config: Config, options: { fetcher?: Fetch; logger?: F
   app.addHook("preClose", async () => {
     controllers.forEach(controller => controller.abort(new Error("Server shutting down.")));
   });
-  if (pool) registerAdmin(app, config, pool, translator, id => controllers.get(id)!.signal, apiKeys, settings);
+  if (pool) registerAdmin(app, config, pool, translator, id => controllers.get(id)!.signal, apiKeys, settings, usage);
   app.get("/auth/status", async request => translator.authStatus(controllers.get(request.id)!.signal));
   for (const [path, protocol] of [
     ["/v1/chat/completions", "openai-chat"], ["/v1/responses", "openai-responses"], ["/v1/messages", "anthropic"],

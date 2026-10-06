@@ -3,15 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="dark light">
   <title>管理 · doubao-translate2api</title>
   <link rel="stylesheet" href="/admin/assets/admin.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
   <script type="module" src="/admin/assets/admin.js"></script>
 </head>
 <body>
   <header class="header">
     <div class="brand"><span class="brand-icon"><i data-lucide="languages"></i></span><span>doubao-translate2api</span></div>
-    <div id="user-actions" hidden><span class="session-label"><span class="status-dot"></span>管理会话</span><button id="logout" class="icon-button" title="退出登录" aria-label="退出登录"><i data-lucide="log-out"></i></button></div>
+    <div class="header-actions"><button id="theme-toggle" class="icon-button" title="切换浅色" aria-label="切换浅色"><i data-lucide="sun"></i></button><div id="user-actions" hidden><span class="session-label"><span class="status-dot"></span>管理会话</span><button id="logout" class="icon-button" title="退出登录" aria-label="退出登录"><i data-lucide="log-out"></i></button></div></div>
   </header>
   <main id="login-screen" class="login-screen">
     <form id="login-form" class="login-form">
@@ -24,12 +27,38 @@
     </form>
   </main>
   <main id="dashboard" class="dashboard" hidden>
-    <div class="page-heading"><div><div class="eyebrow">管理控制台</div><h1>Cookie 与连接</h1></div><div class="heading-actions"><button id="refresh" class="icon-button" title="刷新列表" aria-label="刷新列表"><i data-lucide="refresh-cw"></i></button><button id="add-account" class="button primary"><i data-lucide="plus"></i><span>导入 Cookie</span></button></div></div>
+    <div class="page-heading"><div><div class="eyebrow">TRANSLATION / CONTROL</div><h1 id="page-title">运行概览</h1></div><div class="heading-actions"><button id="refresh" class="icon-button" title="刷新数据" aria-label="刷新数据"><i data-lucide="refresh-cw"></i></button><button id="add-account" class="button primary" hidden><i data-lucide="plus"></i><span>导入 Cookie</span></button></div></div>
+    <p id="toast" role="status" class="inline-status" hidden></p>
     <div class="tabs" role="tablist" aria-label="管理视图">
-      <button id="cookies-tab" role="tab" aria-selected="true" aria-controls="cookies-panel" class="tab active"><i data-lucide="key-round"></i>Cookie 池<span id="account-count" class="count">0</span></button>
+      <button id="overview-tab" role="tab" aria-selected="true" aria-controls="overview-panel" class="tab active"><i data-lucide="activity"></i>概览</button>
+      <button id="cookies-tab" role="tab" aria-selected="false" aria-controls="cookies-panel" class="tab" tabindex="-1"><i data-lucide="key-round"></i>Cookie 池<span id="account-count" class="count">0</span></button>
+      <button id="connection-tab" role="tab" aria-selected="false" aria-controls="connection-panel" class="tab" tabindex="-1"><i data-lucide="plug"></i>连接</button>
       <button id="security-tab" role="tab" aria-selected="false" aria-controls="security-panel" class="tab" tabindex="-1"><i data-lucide="lock-keyhole"></i>安全设置</button>
     </div>
-    <section id="cookies-panel" role="tabpanel" aria-labelledby="cookies-tab">
+    <section id="overview-panel" role="tabpanel" aria-labelledby="overview-tab">
+      <div class="overview-lead">
+        <div class="hero-metric"><span class="section-label">今日翻译请求 / UTC</span><strong id="usage-requests">—</strong><span id="usage-date" class="metric-meta"></span></div>
+        <dl class="summary-stats">
+          <div><dt>成功率</dt><dd id="usage-rate">—</dd></div>
+          <div><dt>平均耗时</dt><dd id="usage-average">—</dd></div>
+          <div><dt>最近 <span id="usage-samples">0</span> 次 P95</dt><dd id="usage-p95">—</dd></div>
+          <div><dt>输入字符</dt><dd id="usage-chars">—</dd></div>
+        </dl>
+      </div>
+      <div class="runtime-strip"><span class="section-label">运行负载</span><span id="usage-active">—</span><div id="load-meter" class="load-meter" aria-hidden="true"></div><span id="usage-queue">—</span></div>
+      <dl class="detail-stats">
+        <div><dt>成功 / 失败 / 取消</dt><dd id="usage-outcomes">—</dd></div>
+        <div><dt>上游调用</dt><dd id="usage-upstream">—</dd></div>
+        <div><dt>重试 / 账号切换</dt><dd id="usage-retries">—</dd></div>
+        <div><dt>平均排队耗时</dt><dd id="usage-wait">—</dd></div>
+      </dl>
+      <div class="list-heading"><h2>近 7 天</h2><span>请求次数 · UTC</span></div>
+      <div id="usage-trend" class="trend"></div>
+      <div class="list-heading"><h2>最近失败</h2><span id="usage-storage"></span></div>
+      <div id="usage-failures" class="failure-list" aria-live="polite"></div>
+      <p class="metric-meta">汇总保留 30 天 · 失败记录最多 50 条 · 不保存翻译正文</p>
+    </section>
+    <section id="cookies-panel" role="tabpanel" aria-labelledby="cookies-tab" hidden>
       <div class="routing">
         <div><label class="section-label">调度方式</label><div class="segmented" role="radiogroup" aria-label="调度方式">
           <label><input type="radio" name="mode" value="failover"><span><i data-lucide="shield-check"></i>故障切换</span></label>
@@ -37,11 +66,12 @@
           <label><input type="radio" name="mode" value="manual"><span><i data-lucide="pin"></i>固定账号</span></label>
         </div></div>
         <div id="preferred-field" class="preferred"><label for="preferred-account" class="section-label">优先账号</label><select id="preferred-account"></select></div>
-        <div class="preferred"><label for="default-target-lang" class="section-label">默认目标语言</label><select id="default-target-lang"></select></div>
       </div>
       <div class="list-heading"><h2>已保存的 Cookie</h2><span id="enabled-count"></span></div>
       <div id="accounts" class="account-list" aria-live="polite"></div>
       <div id="empty-state" class="empty-state" hidden><i data-lucide="key-round"></i><p>暂无 Cookie</p><button class="button" id="empty-add">导入 Cookie</button></div>
+    </section>
+    <section id="connection-panel" role="tabpanel" aria-labelledby="connection-tab" hidden>
       <div class="connection">
         <div><h2>连接地址</h2><span class="mono" id="base-url"></span></div><button id="copy-base" class="icon-button" title="复制 Base URL" aria-label="复制 Base URL"><i data-lucide="copy"></i></button>
       </div>
@@ -54,6 +84,14 @@
         </div>
       </div>
       <div class="models"><span class="section-label">模型</span><code>doubao-ai</code><code>volcengine-translate</code><code>microsoft-translator</code></div>
+      <div class="connection-settings"><label for="default-target-lang" class="section-label">默认目标语言</label><select id="default-target-lang"></select></div>
+      <div class="list-heading"><h2>翻译测试</h2></div>
+      <form id="test-form" class="translation-test">
+        <div class="test-options"><div><label for="test-model" class="section-label">模型</label><select id="test-model"><option>doubao-ai</option><option>volcengine-translate</option><option>microsoft-translator</option></select></div><div><label for="test-language" class="section-label">目标语言</label><select id="test-language"></select></div></div>
+        <label for="test-text" class="section-label">原文</label><textarea id="test-text" required maxlength="10000" rows="4" placeholder="输入需要翻译的文本"></textarea>
+        <div class="test-actions"><button id="test-submit" type="submit" class="button primary"><i data-lucide="arrow-right"></i>翻译</button><span id="test-status" role="status" class="metric-meta"></span></div>
+        <label for="test-result" class="section-label">译文</label><textarea id="test-result" readonly rows="4"></textarea>
+      </form>
     </section>
     <section id="security-panel" role="tabpanel" aria-labelledby="security-tab" hidden>
       <div class="security-heading"><h2>修改管理密码</h2><span class="badge neutral"><i data-lucide="shield"></i>管理页专用</span></div>
@@ -97,6 +135,5 @@
       <div class="dialog-actions"><button type="button" class="button" data-close="api-key-dialog">取消</button><button id="api-key-submit" class="button danger" type="submit"><i data-lucide="refresh-cw"></i>确认重新生成</button></div>
     </form>
   </dialog>
-  <div id="toast" role="status" class="toast" hidden></div>
 </body>
 </html>

@@ -19,6 +19,7 @@ const schema = z.object({
   DOUBAO_DEFAULT_SCENE: positive(2).pipe(z.number().max(6)),
   DOUBAO_DEFAULT_TARGET_LANG: defaultLanguage,
   DOUBAO_REQUEST_TIMEOUT_MS: positive(45000),
+  DOUBAO_TOTAL_TIMEOUT_MS: positive(180000),
   DOUBAO_AUTH_TIMEOUT_MS: positive(10000),
   DOUBAO_MAX_RETRIES: z.coerce.number().int().min(0).max(10).default(2),
   DOUBAO_MAX_CONCURRENCY: positive(8),

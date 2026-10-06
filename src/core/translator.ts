@@ -8,13 +8,33 @@ import { buildBatches, segmentText } from "./segmenter.js";
 import type { TranslationRequest, TranslationResult } from "./translation-request.js";
 import { AccountPool, isAccountFailure } from "../admin/accounts.js";
 import type { CookieProvider } from "../auth/cookie-store.js";
+import type { UsageStore, UsageTrace } from "../admin/usage.js";
 
 export class Translator {
   readonly semaphore: Semaphore;
-  constructor(private config: Config, readonly client: DoubaoClient, private pool?: AccountPool) {
+  constructor(private config: Config, readonly client: DoubaoClient, private pool?: AccountPool, private usage?: UsageStore) {
     this.semaphore = new Semaphore(config.DOUBAO_MAX_CONCURRENCY, config.DOUBAO_QUEUE_MAX, config.DOUBAO_QUEUE_TIMEOUT_MS);
   }
   async translate(req: TranslationRequest, signal: AbortSignal): Promise<TranslationResult> {
+    const start = performance.now();
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(new ServiceError("translation_timeout", 504, "Translation exceeded its total time limit.")),
+      this.config.DOUBAO_TOTAL_TIMEOUT_MS);
+    const combined = AbortSignal.any([signal, deadline.signal]);
+    const trace: UsageTrace = { upstreamCalls: 0, retries: 0, switches: 0, queueMs: 0 };
+    let code: string | undefined;
+    try {
+      return await this.run(req, combined, trace);
+    } catch (error) {
+      const failure = combined.aborted ? combined.reason : error;
+      code = signal.aborted ? "client_cancelled" : failure instanceof ServiceError ? failure.code : "internal_error";
+      throw failure;
+    } finally {
+      clearTimeout(timer);
+      this.usage?.record(req, performance.now() - start, trace, code);
+    }
+  }
+  private async run(req: TranslationRequest, signal: AbortSignal, trace: UsageTrace): Promise<TranslationResult> {
     const start = performance.now();
     const segments = segmentText(req.rawText);
     const batches = buildBatches(segments.map(x => x.text));
@@ -25,11 +45,17 @@ export class Translator {
     let outputBytes = 0;
     for (const batch of batches) {
       let retries = 0;
+      let attempts = 0;
       for (;;) {
-        const release = await this.semaphore.acquire(signal);
+        const queueStart = performance.now();
+        let release: () => void;
+        try { release = await this.semaphore.acquire(signal); }
+        finally { trace.queueMs += performance.now() - queueStart; }
         let retry = false;
         let switched = false;
         try {
+          if (attempts++ > 0) trace.retries++;
+          trace.upstreamCalls++;
           const result = await this.client.translate({
             texts: batch.texts, targetLang: req.targetLang, scene: req.scene, engine: MODEL_ENGINE_MAP[req.model],
           }, signal, lease?.provider);
@@ -46,7 +72,7 @@ export class Translator {
             if (await this.pool!.allowsFailover()) {
               try {
                 lease = await this.pool!.choose(tried); tried.add(lease.id);
-                switched = true; retry = true;
+                switched = true; retry = true; trace.switches++;
               } catch (selectionError) {
                 if (!(selectionError instanceof ServiceError) || selectionError.code !== "no_available_cookie") throw selectionError;
               }
@@ -61,6 +87,7 @@ export class Translator {
         if (!switched) await delay(Math.min(250 * 3 ** retries++, 5000) + Math.random() * 100, undefined, { signal });
       }
     }
+    signal.throwIfAborted();
     return {
       model: req.model, text: segments.map((x, i) => output[i] + x.separator).join(""),
       detectedLanguages: [...detected], upstreamBatchCount: batches.length, elapsedMs: performance.now() - start,

@@ -11,7 +11,13 @@ const cookie = "sessionid=fixture; sid_tt=fixture; uid_tt=fixture";
 await writeFile(join(dir, "cookie.txt"), cookie);
 const app = createApp(loadConfig({
   LOG_LEVEL: "silent", DOUBAO_COOKIE_FILE: join(dir, "cookie.txt"),
-}), { fetcher: async () => Response.json({ code: 0 }) });
+}), { fetcher: async (url, init) => {
+  if (!String(url).includes("stream_article_translate")) return Response.json({ code: 0 });
+  const body = JSON.parse(init.body);
+  const items = body.raw_text.map((text, index) => ({ index, res: `译:${text}`, detect_lang: "en" }));
+  return new Response(`event: json\ndata: ${JSON.stringify({ code: 0, data: { items } })}\n\nevent: done\ndata: {}\n\n`,
+    { headers: { "content-type": "text/event-stream" } });
+} });
 let browser;
 try {
   const url = await app.listen({ port: 0, host: "127.0.0.1" });
@@ -30,11 +36,15 @@ try {
   await page.getByRole("alert").filter({ hasText: "密码不正确" }).waitFor();
   await page.getByLabel("管理密码", { exact: true }).fill(password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
-  await page.locator(".account-name").filter({ hasText: "本地 Cookie 文件" }).waitFor();
+  await expect(page.getByRole("heading", { name: "运行概览", exact: true })).toBeVisible();
+  await expect(page.locator("#usage-requests")).toHaveText("0");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.getByRole("tab", { name: "连接", exact: true }).click();
   await expect(page.getByLabel("默认目标语言", { exact: true })).toHaveValue("zh");
   await page.getByLabel("默认目标语言", { exact: true }).selectOption("ja");
   await expect(page.getByLabel("默认目标语言", { exact: true })).toBeEnabled();
   await page.reload();
+  await page.getByRole("tab", { name: "连接", exact: true }).click();
   await expect(page.getByLabel("默认目标语言", { exact: true })).toHaveValue("ja");
   await page.getByLabel("默认目标语言", { exact: true }).selectOption("zh");
   await expect(page.getByLabel("默认目标语言", { exact: true })).toBeEnabled();
@@ -70,10 +80,23 @@ try {
   assert.equal((await fetch(url + "/v1/models", { headers: { "x-api-key": rotatedKey } })).status, 200);
   assert.equal(await page.getByLabel("API Key", { exact: true }).inputValue(), "");
   await page.reload();
-  await page.locator(".account-name").filter({ hasText: "本地 Cookie 文件" }).waitFor();
+  await page.getByRole("tab", { name: "连接", exact: true }).click();
   assert.equal(await page.getByLabel("API Key", { exact: true }).inputValue(), "");
   const screenshots = join(process.cwd(), ".artifacts");
   await mkdir(screenshots, { recursive: true });
+  await page.getByLabel("原文", { exact: true }).fill("Hello world");
+  await page.getByRole("button", { name: "翻译", exact: true }).click();
+  await expect(page.getByLabel("译文", { exact: true })).toHaveValue("译:Hello world");
+  await page.screenshot({ path: join(screenshots, "admin-connection.png"), fullPage: true });
+  await page.getByRole("tab", { name: "概览", exact: true }).click();
+  await expect(page.locator("#usage-requests")).toHaveText("1");
+  await page.screenshot({ path: join(screenshots, "admin-overview-dark.png"), fullPage: true });
+  await page.getByRole("button", { name: "切换浅色", exact: true }).click();
+  await page.screenshot({ path: join(screenshots, "admin-overview-light.png"), fullPage: true });
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.getByRole("button", { name: "切换深色", exact: true }).click();
+  await page.getByRole("tab", { name: /Cookie 池/ }).click();
   for (const name of ["备用账号", "工作账号 · 长名称".repeat(4)]) {
     await page.getByRole("button", { name: "导入 Cookie", exact: true }).first().click();
     await page.getByLabel("账号名称", { exact: true }).fill(name);
@@ -85,6 +108,7 @@ try {
   await page.locator('input[name="mode"][value="round-robin"]').check();
   await page.waitForFunction(() => document.getElementById("preferred-field").hidden);
   await page.reload();
+  await page.getByRole("tab", { name: /Cookie 池/ }).click();
   await page.locator('input[name="mode"][value="round-robin"]:checked').waitFor();
   const toggle = page.getByRole("checkbox", { name: "备用账号：启用", exact: true });
   await toggle.uncheck();
@@ -99,6 +123,18 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await page.screenshot({ path: join(screenshots, "admin-mobile.png"), fullPage: true });
+  for (const [tab, name] of [["概览", "overview"], ["连接", "connection"], ["安全设置", "security"]]) {
+    await page.getByRole("tab", { name: tab, exact: true }).click();
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), name + " overflows");
+    await page.screenshot({ path: join(screenshots, `admin-${name}-mobile.png`), fullPage: true });
+  }
+  await page.setViewportSize({ width: 320, height: 740 });
+  for (const tab of ["概览", "连接", "安全设置", /Cookie 池/]) {
+    await page.getByRole("tab", { name: tab }).click();
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), String(tab) + " overflows at 320px");
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("tab", { name: /Cookie 池/ }).click();
   await page.getByRole("button", { name: "导入 Cookie", exact: true }).first().click();
   await page.locator("#account-dialog").evaluate(async element => {
     await Promise.all(element.getAnimations().map(animation => animation.finished.catch(() => {})));
@@ -118,6 +154,7 @@ try {
   await page.getByRole("heading", { name: "管理登录", exact: true }).waitFor();
   await page.getByLabel("管理密码", { exact: true }).fill(nextPassword);
   await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.getByRole("tab", { name: /Cookie 池/ }).click();
   await page.locator(".account-name").filter({ hasText: "本地 Cookie 文件" }).waitFor();
   if (process.env.UPDATE_README_IMAGES === "true") {
     const longName = "工作账号 · 长名称".repeat(4);
@@ -136,6 +173,11 @@ try {
     await page.screenshot({ path: join(assets, "admin-desktop.png"), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: join(assets, "admin-mobile.png"), fullPage: true });
+    await page.getByRole("tab", { name: "概览", exact: true }).click();
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.screenshot({ path: join(assets, "admin-overview.png"), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: join(assets, "admin-overview-mobile.png"), fullPage: true });
   }
   await page.getByRole("button", { name: "退出登录", exact: true }).click();
   await page.getByRole("heading", { name: "管理登录", exact: true }).waitFor();

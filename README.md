@@ -16,7 +16,7 @@
 
 仅提供文本翻译，不是通用聊天模型。
 
-![管理页面：Cookie 账号、调度与 API Key](assets/admin-desktop.png)
+![深色管理页面：翻译统计与运行概览](assets/admin-overview.png)
 
 <details>
 <summary>查看手机界面</summary>
@@ -56,9 +56,17 @@ docker compose exec doubao-translate2api cat /admin-data/initial-password.txt
 
 也可以在 NAS 文件管理器中查看 `data/admin/initial-password.txt`。登录后：
 
-1. 导入豆包 Cookie，支持 Cookie Header、JSON 导出，以及 `.txt` / `.json` 文件。
+1. 在「Cookie 池」导入豆包 Cookie，支持 Cookie Header、JSON 导出，以及 `.txt` / `.json` 文件。
 2. 点击检测，确认账号登录有效。
-3. 复制页面中的 API Key，填入翻译客户端。
+3. 在「连接」复制 API Key，填入翻译客户端；也可直接进行翻译测试。
+
+管理页默认使用 Nothing 风格深色主题，可切换浅色并记住选择。概览显示今日翻译请求、成功率、输入字符、平均耗时、P95、并发与排队、上游调用、重试、账号切换、近 7 天趋势和最近失败。
+
+统计按 UTC 日期归档，仅统计通过参数校验并进入翻译流程的请求，包含管理页翻译测试；登录检测、鉴权失败与参数错误不计入。每个客户端请求计一次，分批和重试计入上游调用；成功率排除客户端取消。耗时包含排队、上游及重试，P95 使用当天最近最多 256 个完成请求（包含失败与取消）的样本。字符数按 Unicode 码点计数。
+
+`usage.json` 保留 30 天汇总和最多 50 条失败记录，页面展示最近 10 条；不保存原文、译文、Cookie 或 API Key。统计与自动账号运行状态每 10 秒保存，并在正常停机时保存；异常断电可能丢失最近约 10 秒的数据。保存错误在概览显示并记录日志，不影响已成功的翻译；损坏的统计文件会保留供检查，不会自动覆盖。账号编辑和管理配置仍立即保存。数据目录适用于单进程服务，多个实例需各自独立目录。
+
+字体通过 Google Fonts 加载 Space Grotesk 与 Space Mono，中文使用系统字体；无法访问 Google Fonts 时回退到系统字体，不影响管理功能。
 
 管理密码与 API Key 独立。API Key 首次启动生成，重启和升级继续使用；重新生成会立即使旧 Key 失效，需要同步更新客户端。
 
@@ -106,6 +114,7 @@ curl http://服务器IP:8390/v1/chat/completions \
 | `APP_UID` / `APP_GID` | Compose 运行用户，默认 `1000:1000`，与数据目录所有者匹配 |
 | `DOUBAO_MAX_CONCURRENCY` | 上游并发，默认 `8` |
 | `DOUBAO_DEFAULT_TARGET_LANG` | 首次初始化的默认目标语言，默认 `zh`；已有管理页设置优先 |
+| `DOUBAO_TOTAL_TIMEOUT_MS` | 整个翻译请求的时间预算，默认 `180000` 毫秒，包含分批、排队和重试 |
 | `ADMIN_COOKIE_SECURE` / `ADMIN_ORIGIN` | HTTPS 反代时设置为 `true` / 实际域名 |
 | `TRUST_PROXY` | 仅填写实际可信反代的 IP 或网段 |
 

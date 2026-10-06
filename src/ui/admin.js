@@ -1,14 +1,31 @@
 import { createIcons, Languages, ShieldCheck, LogOut, ArrowRight, Eye, EyeOff, RefreshCw, Plus,
   KeyRound, LockKeyhole, Repeat2, Pin, Copy, Shield, Sparkles, Check, X, Upload, Trash2,
-  FileText, CircleCheck, CircleAlert, Clock, Pencil, SearchCheck } from "lucide";
+  FileText, CircleCheck, CircleAlert, Clock, Pencil, SearchCheck, Sun, Moon, Activity, Plug } from "lucide";
 
 const icons = { Languages, ShieldCheck, LogOut, ArrowRight, Eye, EyeOff, RefreshCw, Plus, KeyRound,
   LockKeyhole, Repeat2, Pin, Copy, Shield, Sparkles, Check, X, Upload, Trash2, FileText, CircleCheck,
-  CircleAlert, Clock, Pencil, SearchCheck };
+  CircleAlert, Clock, Pencil, SearchCheck, Sun, Moon, Activity, Plug };
 const $ = id => document.getElementById(id);
 const iconify = () => createIcons({ icons });
 const escape = value => String(value).replace(/[&<>"']/g, char => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]);
 let csrf = "", data = { mode: "failover", activeId: "file", accounts: [] }, editing = null, deleting = null, toastTimer;
+const tabs = ["overview-tab", "cookies-tab", "connection-tab", "security-tab"];
+let usageTimer, usageLoading = false;
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  const label = theme === "dark" ? "切换浅色" : "切换深色";
+  $("theme-toggle").title = $("theme-toggle").ariaLabel = label;
+  $("theme-toggle").innerHTML = `<i data-lucide="${theme === "dark" ? "sun" : "moon"}"></i>`;
+  iconify();
+}
+let savedTheme;
+try { savedTheme = localStorage.getItem("admin-theme"); } catch { /* Storage may be restricted. */ }
+setTheme(savedTheme === "light" ? "light" : "dark");
+$("theme-toggle").addEventListener("click", () => {
+  const theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  setTheme(theme);
+  try { localStorage.setItem("admin-theme", theme); } catch { /* The toggle still works without storage. */ }
+});
 const errors = {
   invalid_admin_password: "密码不正确", admin_login_rate_limited: "登录尝试过多，请稍后再试",
   admin_login_required: "登录已过期，请重新登录", admin_csrf_error: "会话已更新，请刷新后重试",
@@ -18,6 +35,11 @@ const errors = {
   api_key_managed_externally: "API Key 由环境变量配置，请修改部署配置",
   api_auth_disabled: "API 鉴权已关闭",
   unsupported_target_language: "不支持这个目标语言",
+  translation_timeout: "翻译超过总时间限制，请缩短文本后重试",
+  no_available_cookie: "没有可用 Cookie，请检查账号状态",
+  queue_full: "请求队列已满", queue_timeout: "排队超时",
+  upstream_auth_error: "豆包登录已失效", upstream_timeout: "上游请求超时",
+  upstream_network_error: "上游连接失败", upstream_incomplete_result: "译文不完整",
 };
 async function api(path, method = "GET", body) {
   const response = await fetch("/admin/api" + path, {
@@ -35,6 +57,9 @@ async function api(path, method = "GET", body) {
 function toast(message, error = false) {
   clearTimeout(toastTimer);
   $("toast").textContent = message; $("toast").classList.toggle("error", error); $("toast").hidden = false;
+  const host = document.querySelector("dialog[open] form") ?? ($("dashboard").hidden ? $("login-form") : $("dashboard"));
+  if (host.id === "dashboard") host.insertBefore($("toast"), document.querySelector(".tabs"));
+  else host.append($("toast"));
   toastTimer = setTimeout(() => { $("toast").hidden = true; }, 4500);
 }
 async function busy(button, action) {
@@ -44,12 +69,15 @@ async function busy(button, action) {
   finally { if (button) { button.disabled = false; button.removeAttribute("aria-busy"); } }
 }
 function showLogin() {
+  clearInterval(usageTimer);
   csrf = ""; $("dashboard").hidden = true; $("user-actions").hidden = true; $("login-screen").hidden = false;
   for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
   $("account-form").reset(); $("password-form").reset(); editing = null; deleting = null;
   data = { mode: "failover", activeId: "file", accounts: [] };
   clearApiKey();
-  selectTab("cookies-tab");
+  selectTab("overview-tab");
+  $("test-form").reset(); $("test-status").textContent = "";
+  $("usage-failures").replaceChildren();
   document.querySelectorAll("[data-reveal]").forEach(button => {
     $(button.dataset.reveal).type = "password";
     button.title = button.ariaLabel = "显示密码";
@@ -61,8 +89,54 @@ async function showDashboard() {
   await reload();
   await loadApiKey();
   await loadTranslationSettings();
+  await loadUsage();
   $("login-screen").hidden = true; $("dashboard").hidden = false; $("user-actions").hidden = false;
   $("base-url").textContent = location.origin + "/v1";
+  clearInterval(usageTimer);
+  usageTimer = setInterval(() => {
+    if (!document.hidden && !$("dashboard").hidden && !$("overview-panel").hidden)
+      void loadUsage().catch(() => { $("usage-storage").textContent = "刷新失败"; });
+  }, 10000);
+}
+const number = value => new Intl.NumberFormat("zh-CN").format(value ?? 0);
+const duration = value => value == null ? "—" : value >= 1000 ? `${(value / 1000).toFixed(2)} s` : `${Math.round(value)} ms`;
+async function loadUsage() {
+  if (usageLoading) return;
+  usageLoading = true;
+  const session = csrf;
+  try {
+    const usage = await api("/usage");
+    if (!csrf || csrf !== session) return;
+    const today = usage.today ?? {}, completed = (today.succeeded ?? 0) + (today.failed ?? 0);
+    $("usage-requests").textContent = number(today.requests);
+    $("usage-date").textContent = new Date().toISOString().slice(0, 10);
+    $("usage-rate").textContent = completed ? `${(100 * (today.succeeded ?? 0) / completed).toFixed(1)}%` : "—";
+    $("usage-average").textContent = duration(usage.averageMs);
+    $("usage-p95").textContent = duration(usage.p95Ms);
+    $("usage-samples").textContent = usage.sampleCount;
+    $("usage-chars").textContent = number(today.inputChars);
+    $("usage-outcomes").textContent = `${number(today.succeeded)} / ${number(today.failed)} / ${number(today.cancelled)}`;
+    $("usage-upstream").textContent = number(today.upstreamCalls);
+    $("usage-retries").textContent = `${number(today.retries)} / ${number(today.switches)}`;
+    $("usage-wait").textContent = duration(usage.averageQueueMs);
+    const load = usage.concurrency;
+    $("usage-active").textContent = `${load.active} / ${load.limit} 处理中`;
+    $("usage-queue").textContent = `${load.queued} / ${load.maxQueue} 排队`;
+    const segments = 20, filled = Math.ceil(segments * load.active / load.limit);
+    $("load-meter").innerHTML = Array.from({ length: segments }, (_, i) => `<span class="${i < filled ? "filled" : ""}"></span>`).join("");
+    const days = Array.from({ length: 7 }, (_, i) => {
+      const date = new Date(Date.now() - (6 - i) * 86400000).toISOString().slice(0, 10);
+      return { date, requests: usage.days.find(day => day.date === date)?.requests ?? 0 };
+    });
+    const max = Math.max(1, ...days.map(day => day.requests));
+    $("usage-trend").innerHTML = days.map(day => `<div class="trend-column"><span>${number(day.requests)}</span><meter min="0" max="${max}" value="${day.requests}" aria-label="${day.date} 请求次数">${day.requests}</meter><span>${day.date.slice(5)}</span></div>`).join("");
+    const storageError = usage.persistence === "error" || usage.accountPersistence === "error";
+    $("usage-storage").textContent = usage.persistence === "error" ? "统计保存异常" : usage.accountPersistence === "error" ? "账号状态保存异常" :
+      usage.persistence === "saved" && usage.accountPersistence === "saved" ? "已保存 · 10 秒刷新" : "等待保存 · 10 秒刷新";
+    $("usage-storage").classList.toggle("error-value", storageError);
+    $("usage-failures").innerHTML = usage.failures.length ? usage.failures.slice(0, 10).map(item =>
+      `<div class="failure-row"><time>${date(item.time)}</time><span>${escape(item.model)}<small>${escape(item.protocol)}</small></span><span class="error-value">${escape(errors[item.code] ?? reasons[item.code] ?? item.code)}</span><span>${duration(item.elapsedMs)}</span></div>`).join("") : '<p class="empty-state">暂无失败记录</p>';
+  } finally { usageLoading = false; }
 }
 const date = time => time ? new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(time) : "—";
 const health = {
@@ -117,6 +191,8 @@ async function loadTranslationSettings() {
   $("default-target-lang").innerHTML = languages.map(lang =>
     `<option value="${escape(lang)}">${escape(languageLabels[lang] ?? lang)}</option>`).join("");
   $("default-target-lang").value = settings.defaultTargetLang;
+  $("test-language").innerHTML = $("default-target-lang").innerHTML;
+  $("test-language").value = settings.defaultTargetLang;
 }
 $("default-target-lang").addEventListener("change", async () => {
   const select = $("default-target-lang"); select.disabled = true;
@@ -215,7 +291,7 @@ $("logout").addEventListener("click", () => busy($("logout"), async () => {
   try { await api("/logout", "POST", {}); showLogin(); } catch (error) { toast(error.message, true); }
 }));
 $("refresh").addEventListener("click", () => busy($("refresh"), async () => {
-  try { await reload(); toast("列表已更新"); } catch (error) { toast(error.message, true); }
+  try { await Promise.all([reload(), loadUsage()]); toast("数据已更新"); } catch (error) { toast(error.message, true); }
 }));
 for (const id of ["add-account", "empty-add"]) $(id).addEventListener("click", () => openAccount());
 document.querySelectorAll("[data-close]").forEach(button => button.addEventListener("click", () => $(button.dataset.close).close()));
@@ -302,23 +378,42 @@ document.querySelectorAll("input[name=mode]").forEach(input => input.addEventLis
 $("preferred-account").addEventListener("change", () => changeRouting(data.mode, $("preferred-account").value));
 function selectTab(id) {
   clearApiKey(); iconify();
-  for (const tabId of ["cookies-tab", "security-tab"]) {
+  for (const tabId of tabs) {
     const active = id === tabId;
     $(tabId).ariaSelected = String(active); $(tabId).classList.toggle("active", active); $(tabId).tabIndex = active ? 0 : -1;
-    $(tabId === "cookies-tab" ? "cookies-panel" : "security-panel").hidden = !active;
+    $(tabId.replace("-tab", "-panel")).hidden = !active;
   }
   $("add-account").hidden = id !== "cookies-tab";
+  $("page-title").textContent = ({ "overview-tab": "运行概览", "cookies-tab": "Cookie 池", "connection-tab": "连接与翻译", "security-tab": "安全设置" })[id];
+  $("toast").hidden = true;
+  if (id === "overview-tab" && csrf) void loadUsage().catch(() => toast("统计刷新失败", true));
 }
-for (const id of ["cookies-tab", "security-tab"]) {
+for (const id of tabs) {
   $(id).addEventListener("click", () => selectTab(id));
   $(id).addEventListener("keydown", event => {
     if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
       event.preventDefault();
-      const next = event.key === "Home" ? "cookies-tab" : event.key === "End" ? "security-tab" : id === "cookies-tab" ? "security-tab" : "cookies-tab";
+      const next = event.key === "Home" ? tabs[0] : event.key === "End" ? tabs.at(-1) :
+        tabs[(tabs.indexOf(id) + (event.key === "ArrowLeft" ? tabs.length - 1 : 1)) % tabs.length];
       selectTab(next); $(next).focus();
     }
   });
 }
+$("test-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const session = csrf;
+  $("test-result").value = ""; $("test-status").textContent = "[翻译中…]";
+  await busy($("test-submit"), async () => {
+    try {
+      const result = await api("/translate", "POST", { text: $("test-text").value, model: $("test-model").value, targetLang: $("test-language").value });
+      if (csrf !== session) return;
+      $("test-result").value = result.text;
+      $("test-status").textContent = `${duration(result.elapsedMs)} · ${result.upstreamBatchCount} 批次`;
+    } catch (error) {
+      if (csrf === session) $("test-status").textContent = error.message;
+    }
+  });
+});
 $("copy-base").addEventListener("click", async () => {
   try { await copyText(location.origin + "/v1"); toast("连接地址已复制"); }
   catch { toast("无法访问剪贴板", true); }

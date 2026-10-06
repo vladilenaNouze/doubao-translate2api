@@ -5,6 +5,7 @@ export class Semaphore {
   private active = 0;
   private queue: Waiter[] = [];
   constructor(private limit: number, private maxQueue: number, private timeout: number) {}
+  get status() { return { active: this.active, queued: this.queue.length, limit: this.limit, maxQueue: this.maxQueue }; }
   async acquire(signal: AbortSignal): Promise<() => void> {
     signal.throwIfAborted();
     if (this.active < this.limit) { this.active++; return this.releaseOnce(); }
