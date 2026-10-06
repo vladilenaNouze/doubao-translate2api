@@ -20,7 +20,8 @@ function scan(text: string): DoubaoLang[] {
   }
   return found;
 }
-export function determineLanguage(body: string | undefined, header: string | undefined, contexts: string[], user: string) {
+export function determineLanguage(body: string | undefined, header: string | undefined, contexts: string[], user: string,
+  defaultLanguage?: DoubaoLang) {
   if (body !== undefined) return normalizeLanguage(body);
   if (header !== undefined) return normalizeLanguage(header);
   for (const values of [contexts.flatMap(scan), scan(instructionPrefix(user))]) {
@@ -28,6 +29,9 @@ export function determineLanguage(body: string | undefined, header: string | und
     if (unique.length > 1) throw invalid("Conflicting target translation languages.", "invalid_request", "target_lang");
     if (unique.length === 1) return unique[0]!;
   }
+  const directive = /(?:\btranslate\b[^\n:：]{0,160}\b(?:to|into)\s+|\b(?:target|output)\s+language\s*[:：]|翻译(?:成|为)|译为|目标语言\s*[:：])/i;
+  if (defaultLanguage && ![...contexts, instructionPrefix(user)].some(text => directive.test(text)))
+    return defaultLanguage;
   throw invalid("Unable to determine target translation language.", "target_language_required", "target_lang");
 }
 function instructionPrefix(user: string) {

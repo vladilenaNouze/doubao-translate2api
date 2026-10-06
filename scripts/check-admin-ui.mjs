@@ -31,6 +31,13 @@ try {
   await page.getByLabel("管理密码", { exact: true }).fill(password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.locator(".account-name").filter({ hasText: "本地 Cookie 文件" }).waitFor();
+  await expect(page.getByLabel("默认目标语言", { exact: true })).toHaveValue("zh");
+  await page.getByLabel("默认目标语言", { exact: true }).selectOption("ja");
+  await expect(page.getByLabel("默认目标语言", { exact: true })).toBeEnabled();
+  await page.reload();
+  await expect(page.getByLabel("默认目标语言", { exact: true })).toHaveValue("ja");
+  await page.getByLabel("默认目标语言", { exact: true }).selectOption("zh");
+  await expect(page.getByLabel("默认目标语言", { exact: true })).toBeEnabled();
   const keyPath = join(dir, "admin", "api-key.txt");
   const initialKey = (await readFile(keyPath, "utf8")).trim();
   assert.equal(await page.getByLabel("API Key", { exact: true }).inputValue(), "");
@@ -42,6 +49,7 @@ try {
   await expect(page.getByRole("button", { name: "复制 API Key", exact: true })).toBeEnabled();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), initialKey);
   // Exercise the fallback used on NAS pages served over plain HTTP.
+  await page.evaluate(() => navigator.clipboard.writeText("clipboard-fallback-marker"));
   await page.evaluate(() => {
     window.testClipboard = navigator.clipboard;
     Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });

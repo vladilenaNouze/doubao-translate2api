@@ -13,6 +13,8 @@ import { formatJSON, formatSSE } from "./protocols/format.js";
 import { AccountPool } from "./admin/accounts.js";
 import { registerAdmin } from "./admin/routes.js";
 import { ApiKeyStore } from "./auth/api-key-store.js";
+import { listModels } from "./protocols/model-list.js";
+import { TranslationSettings } from "./admin/translation-settings.js";
 
 export function createApp(config: Config, options: { fetcher?: Fetch; logger?: FastifyServerOptions["logger"] } = {}) {
   const app = Fastify({
@@ -28,7 +30,8 @@ export function createApp(config: Config, options: { fetcher?: Fetch; logger?: F
     (code, fields) => app.log.warn({ code, ...fields }, "Upstream diagnostic"));
   const pool = config.ADMIN_ENABLED ? new AccountPool(config) : undefined;
   const apiKeys = new ApiKeyStore(config);
-  app.addHook("onReady", async () => { await apiKeys.initialize(); });
+  const settings = new TranslationSettings(config);
+  app.addHook("onReady", async () => { await apiKeys.initialize(); await settings.initialize(); });
   const translator = new Translator(config, client, pool);
   const controllers = new Map<string, AbortController>();
   if (config.ALLOW_NO_AUTH) app.log.warn("API authentication is disabled.");
@@ -57,14 +60,15 @@ export function createApp(config: Config, options: { fetcher?: Fetch; logger?: F
     ...(request.url.split("?")[0] === "/v1/messages" ? { type: "error" } : {}),
     error: { type: "invalid_request_error", message: "Route not found.", code: "not_found" },
   }));
-  app.get("/", async () => ({ name: "doubao-translate2api", version: "0.1.1", status: "ok" }));
+  app.get("/", async () => ({ name: "doubao-translate2api", version: "0.1.2", status: "ok" }));
   app.get("/health", async () => ({ status: "ok" }));
   app.get("/info", async () => ({
-    name: "doubao-translate2api", version: "0.1.1",
+    name: "doubao-translate2api", version: "0.1.2",
     protocols: ["openai-chat", "openai-responses", "anthropic"],
     models: models.map(x => x.id), supported_languages: languages,
+    default_target_lang: settings.defaultTargetLang,
   }));
-  app.get("/v1/models", async () => ({ object: "list", data: models }));
+  app.get("/v1/models", async request => listModels(request.query));
   app.get<{ Params: { model: string } }>("/v1/models/:model", async request => {
     const model = models.find(x => x.id === request.params.model);
     if (!model) throw new ServiceError("model_not_found", 404, "Model not found.", false, "model");
@@ -87,7 +91,7 @@ export function createApp(config: Config, options: { fetcher?: Fetch; logger?: F
   app.addHook("preClose", async () => {
     controllers.forEach(controller => controller.abort(new Error("Server shutting down.")));
   });
-  if (pool) registerAdmin(app, config, pool, translator, id => controllers.get(id)!.signal, apiKeys);
+  if (pool) registerAdmin(app, config, pool, translator, id => controllers.get(id)!.signal, apiKeys, settings);
   app.get("/auth/status", async request => translator.authStatus(controllers.get(request.id)!.signal));
   for (const [path, protocol] of [
     ["/v1/chat/completions", "openai-chat"], ["/v1/responses", "openai-responses"], ["/v1/messages", "anthropic"],
@@ -95,7 +99,7 @@ export function createApp(config: Config, options: { fetcher?: Fetch; logger?: F
     app.post(path, async (request, reply) => {
       const language = request.headers["x-doubao-target-lang"];
       const adapted = adaptRequest(protocol, request.body, typeof language === "string" ? language : undefined,
-        config.DOUBAO_DEFAULT_SCENE, request.id);
+        config.DOUBAO_DEFAULT_SCENE, request.id, settings.defaultTargetLang);
       const result = await translator.translate(adapted.canonical, controllers.get(request.id)!.signal);
       app.log.info({
         request_id: request.id, protocol, model: result.model, target_lang: adapted.canonical.targetLang,

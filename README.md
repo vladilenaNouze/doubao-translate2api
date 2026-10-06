@@ -27,7 +27,7 @@
 
 ## Docker 部署
 
-镜像：`muzileee/doubao-translate2api:0.1.1`，支持 AMD64 / ARM64。
+镜像：`muzileee/doubao-translate2api:latest`，当前版本 `0.1.2`，支持 AMD64 / ARM64。
 
 1. 将 [docker-compose.nas.yml](docker-compose.nas.yml) 保存为项目目录中的 `docker-compose.yml`，或粘贴到 NAS 的 Compose 创建窗口。
 2. 在项目目录创建 `data/admin`，确保容器用户有写入权限。
@@ -81,7 +81,9 @@ API Key 使用管理页复制的值。
 
 Magpie 选择相应兼容 Provider，并填写 Base URL、API Key 和模型。若客户端自行追加 `/v1`，填写根地址，避免重复路径。
 
-目标语言可用 `target_lang`、`X-Doubao-Target-Lang`，或明确的翻译指令指定，例如“翻译成中文”。未指定语言会返回错误。
+未指定目标语言时默认翻译为简体中文，可在管理页的“默认目标语言”中修改，立即生效并在重启后保留。请求中的 `target_lang`、`X-Doubao-Target-Lang` 或明确的翻译指令按此顺序优先于默认设置；明确指定不支持的语言或同级语言冲突仍返回错误。
+
+客户端可通过 `GET /v1/models` 获取模型列表，或通过 `GET /v1/models/模型ID` 获取单个模型信息；均需要 API Key，兼容 OpenAI 与 Anthropic SDK。
 
 ```sh
 curl http://服务器IP:8390/v1/chat/completions \
@@ -101,15 +103,18 @@ curl http://服务器IP:8390/v1/chat/completions \
 | `API_KEY` / `API_KEYS` | 可不填；手动配置优先，管理页不能修改环境变量中的 Key |
 | `APP_UID` / `APP_GID` | Compose 运行用户，默认 `1000:1000`，与数据目录所有者匹配 |
 | `DOUBAO_MAX_CONCURRENCY` | 上游并发，默认 `8` |
+| `DOUBAO_DEFAULT_TARGET_LANG` | 首次初始化的默认目标语言，默认 `zh`；已有管理页设置优先 |
 | `ADMIN_COOKIE_SECURE` / `ADMIN_ORIGIN` | HTTPS 反代时设置为 `true` / 实际域名 |
 | `TRUST_PROXY` | 仅填写实际可信反代的 IP 或网段 |
 
-升级时修改 Compose 中的镜像版本，再执行：
+Compose 模板使用 `latest` 和 `pull_policy: always`，启动或重新部署时会检查最新版，无须修改版本号。更新正在运行的容器时执行：
 
 ```sh
 docker compose pull
 docker compose up -d
 ```
+
+运行中的容器不会自行升级。需要定时更新时，可在 NAS 任务计划中定期运行上述命令；保留 `data/admin` 目录即可保留账号、密码、API Key 和默认语言。需要固定版本时，将镜像标签改为 `0.1.2`。
 
 自动生成的 Key 在 `data/admin/api-key.txt`，权限为 `600`。文件损坏或不可读会拒绝启动；不会自动替换。修改管理密码会退出所有管理会话，但不会改变 API Key。
 
@@ -127,4 +132,4 @@ DOUBAO_COOKIE_FILE=./data/cookie.txt npm run dev
 
 本地管理页：`http://127.0.0.1:8000/admin`。浏览器测试运行 `npm run test:ui`，首次需 `npx playwright install chromium`。CI 包含协议 SDK、浏览器和 Docker 检查；模拟测试通过不代表真实豆包或 Magpie 验收完成。
 
-发布时推送与 `package.json` 版本一致的标签，例如 `v0.1.1`。GitHub Actions 检查通过后自动上传双架构镜像；需要配置 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN` Secrets。
+发布时推送与 `package.json` 版本一致的标签，例如 `v0.1.2`。GitHub Actions 检查通过后自动上传双架构镜像；需要配置 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN` Secrets。

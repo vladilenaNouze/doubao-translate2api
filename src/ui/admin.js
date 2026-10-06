@@ -17,6 +17,7 @@ const errors = {
   api_key_storage_error: "API Key 读写失败，请检查数据目录权限",
   api_key_managed_externally: "API Key 由环境变量配置，请修改部署配置",
   api_auth_disabled: "API 鉴权已关闭",
+  unsupported_target_language: "不支持这个目标语言",
 };
 async function api(path, method = "GET", body) {
   const response = await fetch("/admin/api" + path, {
@@ -59,6 +60,7 @@ function showLogin() {
 async function showDashboard() {
   await reload();
   await loadApiKey();
+  await loadTranslationSettings();
   $("login-screen").hidden = true; $("dashboard").hidden = false; $("user-actions").hidden = false;
   $("base-url").textContent = location.origin + "/v1";
 }
@@ -103,6 +105,25 @@ function render() {
   iconify();
 }
 async function reload() { data = await api("/accounts"); render(); }
+const languageLabels = {
+  zh: "简体中文", "zh-Hant": "繁体中文", en: "英语", ja: "日语", ko: "韩语", fr: "法语",
+  de: "德语", es: "西班牙语", "es-ES": "西班牙语（西班牙）", pt: "葡萄牙语", ru: "俄语",
+  ar: "阿拉伯语", it: "意大利语", id: "印尼语", ms: "马来语", th: "泰语", vi: "越南语",
+  fil: "菲律宾语", uz: "乌兹别克语",
+};
+async function loadTranslationSettings() {
+  const settings = await api("/settings/translation");
+  const languages = ["zh", "zh-Hant", ...settings.supportedLanguages.filter(lang => !["zh", "zh-Hant"].includes(lang))];
+  $("default-target-lang").innerHTML = languages.map(lang =>
+    `<option value="${escape(lang)}">${escape(languageLabels[lang] ?? lang)}</option>`).join("");
+  $("default-target-lang").value = settings.defaultTargetLang;
+}
+$("default-target-lang").addEventListener("change", async () => {
+  const select = $("default-target-lang"); select.disabled = true;
+  try { await api("/settings/translation", "PUT", { targetLang: select.value }); toast("默认目标语言已更新"); }
+  catch (error) { await loadTranslationSettings().catch(() => {}); toast(error.message, true); }
+  finally { select.disabled = false; }
+});
 function clearApiKey() {
   $("api-key-value").value = ""; $("api-key-value").type = "password";
   const button = $("reveal-api-key");

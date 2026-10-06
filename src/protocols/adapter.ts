@@ -3,6 +3,7 @@ import { invalid } from "../core/errors.js";
 import { determineLanguage, extractSource } from "../core/prompt-parser.js";
 import { resolveModel, type DoubaoScene } from "../core/models.js";
 import type { Protocol, TranslationRequest } from "../core/translation-request.js";
+import type { DoubaoLang } from "../doubao/languages.js";
 
 const baseSchema = z.object({
   model: z.string().min(1),
@@ -80,6 +81,7 @@ export interface AdaptedRequest {
 }
 export function adaptRequest(
   protocol: Protocol, input: unknown, headerLanguage: string | undefined, defaultScene: number, requestId: string,
+  defaultLanguage?: DoubaoLang,
 ): AdaptedRequest {
   const parsed = baseSchema.safeParse(input);
   if (!parsed.success) {
@@ -103,7 +105,7 @@ export function adaptRequest(
     user = fromMessages(messages(body.messages), protocol, contexts);
   }
   const model = resolveModel(body.model);
-  const targetLang = determineLanguage(body.target_lang, headerLanguage, contexts, user);
+  const targetLang = determineLanguage(body.target_lang, headerLanguage, contexts, user, defaultLanguage);
   return {
     canonical: {
       protocol, model, targetLang, rawText: extractSource(user), stream: body.stream,

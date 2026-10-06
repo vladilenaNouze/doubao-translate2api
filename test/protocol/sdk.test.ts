@@ -55,6 +55,54 @@ describe("official SDK compatibility", () => {
     expect((await openai.models.retrieve("volcengine-translate")).owned_by).toBe("volcengine");
     await expect(openai.models.retrieve("unknown")).rejects.toMatchObject({ status: 404 });
   });
+  it("supports Anthropic model discovery, retrieval and automatic pagination without upstream calls", async () => {
+    const { anthropic, mock, app } = await setup();
+    const listing = await anthropic.models.list();
+    expect(listing.has_more).toBe(false);
+    expect(listing.first_id).toBe("doubao-ai");
+    expect(listing.last_id).toBe("microsoft-translator");
+    expect(listing.data.every(model => model.type === "model" && model.display_name && model.created_at)).toBe(true);
+    const ids: string[] = [];
+    for await (const model of anthropic.models.list({ limit: 1 })) ids.push(model.id);
+    expect(ids).toEqual(["doubao-ai", "volcengine-translate", "microsoft-translator"]);
+    const earlier: string[] = [];
+    for await (const model of anthropic.models.list({ limit: 1, before_id: "microsoft-translator" })) earlier.push(model.id);
+    expect(earlier).toEqual(["volcengine-translate", "doubao-ai"]);
+    expect((await anthropic.models.retrieve("doubao-ai")).display_name).toBe("Doubao AI Translation");
+    for (const query of ["limit=0", "limit=NaN", "after_id=unknown", "before_id=unknown"])
+      expect((await app.inject({ url: "/v1/models?" + query, headers: { "x-api-key": "api-secret" } })).statusCode).toBe(400);
+    const empty = await app.inject({ url: "/v1/models?after_id=microsoft-translator", headers: { "x-api-key": "api-secret" } });
+    expect(empty.json()).toMatchObject({ data: [], has_more: false, first_id: null, last_id: null });
+    expect(mock.requests).toHaveLength(0);
+  });
+  it("accepts protocol probe text with default Chinese across all three SDKs and streams", async () => {
+    const { openai, anthropic, mock } = await setup();
+    const message = { role: "user" as const, content: "Say OK" };
+    expect((await openai.chat.completions.create({ model: "doubao-ai", messages: [message] })).choices[0]?.message.content).toBe("译:Say OK");
+    expect((await openai.responses.create({ model: "doubao-ai", input: "Say OK" })).output_text).toBe("译:Say OK");
+    expect((await anthropic.messages.create({ model: "doubao-ai", max_tokens: 32, messages: [message] })).content[0]).toEqual({ type: "text", text: "译:Say OK" });
+    const chatFinal = await openai.chat.completions.stream({ model: "doubao-ai", messages: [message] }).finalChatCompletion();
+    expect(chatFinal.choices[0]?.message.content).toBe("译:Say OK");
+    expect((await openai.responses.stream({ model: "doubao-ai", input: "Say OK" }).finalResponse()).output_text).toBe("译:Say OK");
+    expect((await anthropic.messages.stream({ model: "doubao-ai", max_tokens: 32, messages: [message] }).finalMessage()).content[0]).toEqual({ type: "text", text: "译:Say OK" });
+    expect(mock.requests).toHaveLength(6);
+    expect(mock.requests.every(request => request.body.target_lang === "zh")).toBe(true);
+  });
+  it("uses a configured default while allowing body, header and prompt overrides", async () => {
+    const { app, mock } = await setup("ok", { DOUBAO_DEFAULT_TARGET_LANG: "zh-TW" });
+    const inputs = [
+      { payload: { model: "doubao-ai", input: "Hello" }, headers: {}, language: "zh-Hant" },
+      { payload: { model: "doubao-ai", target_lang: "ja", input: "Hello" }, headers: {}, language: "ja" },
+      { payload: { model: "doubao-ai", input: "Hello" }, headers: { "x-doubao-target-lang": "ko" }, language: "ko" },
+      { payload: { model: "doubao-ai", instructions: "Translate into French.", input: "Hello" }, headers: {}, language: "fr" },
+    ];
+    for (const input of inputs) {
+      const result = await app.inject({ method: "POST", url: "/v1/responses", headers: { "x-api-key": "api-secret", ...input.headers }, payload: input.payload });
+      expect(result.statusCode).toBe(200);
+      expect(mock.requests.at(-1)?.body.target_lang).toBe(input.language);
+    }
+    expect((await app.inject({ url: "/info", headers: { "x-api-key": "api-secret" } })).json().default_target_lang).toBe("zh-Hant");
+  });
   it("supports chat JSON, stream iteration, usage and final completion", async () => {
     const { openai } = await setup();
     const result = await openai.chat.completions.create(chatBody());
@@ -182,7 +230,7 @@ describe("service behavior", () => {
     expect(response.headers["content-type"]).toContain("application/json");
     expect(response.body).not.toContain("sensitive upstream");
   });
-  it("validates scenes, empty input, language absence and body size", async () => {
+  it("validates scenes, empty input and body size while defaulting absent language to Chinese", async () => {
     const { app } = await setup();
     for (const extra of [{ doubao_scene: "2" }, { doubao_scene: 7 }, { target_lang: "xx" }, { messages: [{ role: "user", content: "" }] }]) {
       expect((await app.inject({
@@ -193,7 +241,8 @@ describe("service behavior", () => {
       method: "POST", url: "/v1/chat/completions", headers: { "x-api-key": "api-secret" },
       payload: { model: "doubao-ai", messages: [{ role: "user", content: "hello" }] },
     });
-    expect(missing.json().error.code).toBe("target_language_required");
+    expect(missing.statusCode).toBe(200);
+    expect(missing.json().choices[0].message.content).toBe("译:hello");
     const large = await app.inject({
       method: "POST", url: "/v1/chat/completions", headers: { "x-api-key": "api-secret" },
       payload: { ...chatBody(), messages: [{ role: "user", content: "x".repeat(2 * 1024 * 1024) }] },

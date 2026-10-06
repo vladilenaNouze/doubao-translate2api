@@ -14,6 +14,7 @@ import { BoundedSessionStore } from "./sessions.js";
 import type { Translator } from "../core/translator.js";
 import type { CookieProvider } from "../auth/cookie-store.js";
 import type { ApiKeyStore } from "../auth/api-key-store.js";
+import type { TranslationSettings } from "./translation-settings.js";
 
 const fields = z.object({ name: z.string().trim().min(1).max(64), cookie: z.string().min(1).max(131072) });
 const update = fields.partial().extend({ enabled: z.boolean().optional() }).refine(x => Object.keys(x).length > 0);
@@ -24,7 +25,7 @@ function validate<T>(schema: z.ZodType<T>, body: unknown): T {
   return result.data;
 }
 export function registerAdmin(app: FastifyInstance, config: Config, pool: AccountPool, translator: Translator,
-  signalFor: (id: string) => AbortSignal, apiKeys: ApiKeyStore) {
+  signalFor: (id: string) => AbortSignal, apiKeys: ApiKeyStore, settings: TranslationSettings) {
   app.register(async admin => {
     await pool.initialize();
     const credentials = new AdminCredentials(config);
@@ -82,6 +83,9 @@ export function registerAdmin(app: FastifyInstance, config: Config, pool: Accoun
       return { csrf: request.session.csrf };
     });
     admin.get("/admin/api/session", async request => ({ csrf: request.session.csrf }));
+    admin.get("/admin/api/settings/translation", async () => settings.metadata);
+    admin.put("/admin/api/settings/translation", async request =>
+      settings.update(validate(z.object({ targetLang: z.string().min(1) }), request.body).targetLang));
     admin.get("/admin/api/api-key", async () => apiKeys.metadata);
     admin.post("/admin/api/api-key/reveal", async () => apiKeys.reveal());
     admin.post("/admin/api/api-key/rotate", async () => apiKeys.rotate());

@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, rm, stat, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it, expect } from "vitest";
@@ -8,6 +8,7 @@ import { startMock } from "../fixtures/mock-doubao.js";
 import { AccountPool, importCookie } from "../../src/admin/accounts.js";
 import { ServiceError } from "../../src/core/errors.js";
 import type { Fetch } from "../../src/doubao/client.js";
+import { TranslationSettings } from "../../src/admin/translation-settings.js";
 
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const action of cleanup.splice(0).reverse()) await action(); });
@@ -100,6 +101,47 @@ describe("management authentication", () => {
     expect((await app.inject({ url: "/admin/api/session", headers: next.headers })).statusCode).toBe(401);
     for (let i = 0; i < 5; i++) expect((await login("wrong-password")).result.statusCode).toBe(401);
     expect((await login("a-new-long-password")).result.statusCode).toBe(429);
+  });
+});
+
+describe("default translation language management", () => {
+  it("updates the live default and preserves it after restart", async () => {
+    const { app, config, adminDir, request } = await setup();
+    expect((await request("/settings/translation")).json().defaultTargetLang).toBe("zh");
+    const result = await request("/settings/translation", "PUT", { targetLang: "zh-TW" });
+    expect(result.statusCode).toBe(200);
+    expect(result.json().defaultTargetLang).toBe("zh-Hant");
+    expect((await stat(join(adminDir, "settings.json"))).mode & 0o777).toBe(0o600);
+    expect((await app.inject({ url: "/info", headers: { "x-api-key": "client-key" } })).json().default_target_lang).toBe("zh-Hant");
+    const restarted = createApp({ ...config, DOUBAO_DEFAULT_TARGET_LANG: "ja" });
+    cleanup.push(() => restarted.close()); await restarted.ready();
+    expect((await restarted.inject({ url: "/info", headers: { "x-api-key": "client-key" } })).json().default_target_lang).toBe("zh-Hant");
+    expect((await request("/settings/translation", "PUT", { targetLang: "unsupported" })).statusCode).toBe(400);
+    expect((await request("/settings/translation")).json().defaultTargetLang).toBe("zh-Hant");
+  });
+  it("rejects unauthenticated, CSRF and cross-origin writes without changing settings", async () => {
+    const { app, session, request } = await setup();
+    for (const headers of [
+      { "x-api-key": "client-key" }, { cookie: session.headers.cookie },
+      { ...session.headers, origin: "https://other.example" },
+    ]) expect((await app.inject({ method: "PUT", url: "/admin/api/settings/translation", headers, payload: { targetLang: "ja" } })).statusCode).toBeGreaterThanOrEqual(400);
+    expect((await request("/settings/translation")).json().defaultTargetLang).toBe("zh");
+  });
+  it("uses the initial environment default and retains the previous value after failed writes", async () => {
+    const { config, adminDir } = await setup();
+    const path = join(adminDir, "settings.json");
+    await rm(path);
+    const settings = new TranslationSettings({ ...config, DOUBAO_DEFAULT_TARGET_LANG: "fr" });
+    await settings.initialize();
+    expect(settings.defaultTargetLang).toBe("fr");
+    await rm(path);
+    await mkdir(path);
+    await expect(settings.update("ja")).rejects.toMatchObject({ code: "admin_storage_error" });
+    expect(settings.defaultTargetLang).toBe("fr");
+    await rm(path, { recursive: true });
+    await writeFile(path, "invalid-private-settings");
+    await expect(new TranslationSettings(config).initialize()).rejects.toMatchObject({ code: "admin_storage_error" });
+    expect(await readFile(path, "utf8")).toBe("invalid-private-settings");
   });
 });
 

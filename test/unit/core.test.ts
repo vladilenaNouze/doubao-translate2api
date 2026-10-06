@@ -12,6 +12,9 @@ describe("configuration and request contract", () => {
   it("defaults to generated auth and validates numeric configuration without exposing secrets", () => {
     expect(loadConfig({}).keys).toEqual([]);
     expect(loadConfig({}).ALLOW_NO_AUTH).toBe(false);
+    expect(loadConfig({}).DOUBAO_DEFAULT_TARGET_LANG).toBe("zh");
+    expect(loadConfig({ DOUBAO_DEFAULT_TARGET_LANG: "zh-TW" }).DOUBAO_DEFAULT_TARGET_LANG).toBe("zh-Hant");
+    expect(() => loadConfig({ DOUBAO_DEFAULT_TARGET_LANG: "Klingon" })).toThrow("DOUBAO_DEFAULT_TARGET_LANG");
     expect(() => loadConfig({ API_KEYS: "" })).toThrow("API_KEYS");
     expect(loadConfig({ ALLOW_NO_AUTH: "true" }).PORT).toBe(8000);
     expect(loadConfig({ API_KEY: "one", API_KEYS: "two,three" }).keys).toEqual(["two", "three"]);
@@ -66,6 +69,21 @@ describe("language and prompt parsing", () => {
     expect(extractSource("他告诉我翻译成英文：这是一段叙述。")).toBe("他告诉我翻译成英文：这是一段叙述。");
     expect(extractSource("原文：\n hello\n")).toBe(" hello\n");
     expect(extractSource("  Hello\n\nworld  ")).toBe("  Hello\n\nworld  ");
+  });
+  it("uses a configured fallback after all explicit language sources", () => {
+    expect(determineLanguage(undefined, undefined, [], "Say OK", "zh")).toBe("zh");
+    expect(determineLanguage(undefined, undefined, [], "A story mentioning Chinese", "ja")).toBe("ja");
+    expect(determineLanguage("fr", "ko", ["Translate to English"], "Translate into Japanese:\nhello", "zh")).toBe("fr");
+    expect(determineLanguage(undefined, "ko", ["Translate to English"], "hello", "zh")).toBe("ko");
+    expect(determineLanguage(undefined, undefined, ["Translate to English"], "hello", "zh")).toBe("en");
+    expect(determineLanguage(undefined, undefined, [], "翻译成日语：hello", "zh")).toBe("ja");
+  });
+  it("does not hide unsupported or conflicting language instructions behind the fallback", () => {
+    expect(() => determineLanguage("xx", undefined, [], "hello", "zh")).toThrow();
+    expect(() => determineLanguage(undefined, "xx", [], "hello", "zh")).toThrow();
+    expect(() => determineLanguage(undefined, undefined, ["Translate to English", "Translate to Japanese"], "hello", "zh")).toThrow("Conflicting");
+    expect(() => determineLanguage(undefined, undefined, ["Translate into Klingon"], "hello", "zh")).toThrow();
+    expect(() => determineLanguage(undefined, undefined, [], "Translate into Klingon:\nhello", "zh")).toThrow();
   });
 });
 
