@@ -15,7 +15,7 @@ export class Translator {
   constructor(private config: Config, readonly client: DoubaoClient, private pool?: AccountPool, private usage?: UsageStore) {
     this.semaphore = new Semaphore(config.DOUBAO_MAX_CONCURRENCY, config.DOUBAO_QUEUE_MAX, config.DOUBAO_QUEUE_TIMEOUT_MS);
   }
-  async translate(req: TranslationRequest, signal: AbortSignal): Promise<TranslationResult> {
+  async translate(req: TranslationRequest, signal: AbortSignal, provider?: CookieProvider): Promise<TranslationResult> {
     const start = performance.now();
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(new ServiceError("translation_timeout", 504, "Translation exceeded its total time limit.")),
@@ -24,7 +24,7 @@ export class Translator {
     const trace: UsageTrace = { upstreamCalls: 0, retries: 0, switches: 0, queueMs: 0 };
     let code: string | undefined;
     try {
-      return await this.run(req, combined, trace);
+      return await this.run(req, combined, trace, provider);
     } catch (error) {
       const failure = combined.aborted ? combined.reason : error;
       code = signal.aborted ? "client_cancelled" : failure instanceof ServiceError ? failure.code : "internal_error";
@@ -34,13 +34,13 @@ export class Translator {
       this.usage?.record(req, performance.now() - start, trace, code);
     }
   }
-  private async run(req: TranslationRequest, signal: AbortSignal, trace: UsageTrace): Promise<TranslationResult> {
+  private async run(req: TranslationRequest, signal: AbortSignal, trace: UsageTrace, provider?: CookieProvider): Promise<TranslationResult> {
     const start = performance.now();
     const segments = segmentText(req.rawText);
     const batches = buildBatches(segments.map(x => x.text));
     const output = segments.map(x => x.text);
     const detected = new Set<string>();
-    let lease = this.pool ? await this.pool.choose() : undefined;
+    let lease = this.pool && !provider ? await this.pool.choose() : undefined;
     const tried = new Set<string>(lease ? [lease.id] : []);
     let outputBytes = 0;
     for (const batch of batches) {
@@ -58,7 +58,7 @@ export class Translator {
           trace.upstreamCalls++;
           const result = await this.client.translate({
             texts: batch.texts, targetLang: req.targetLang, scene: req.scene, engine: MODEL_ENGINE_MAP[req.model],
-          }, signal, lease?.provider);
+          }, signal, provider ?? lease?.provider);
           outputBytes += result.texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0);
           if (outputBytes > 8 * 1024 * 1024)
             throw new ServiceError("upstream_stream_error", 502, "Translated output exceeds size limit.");

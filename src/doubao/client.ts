@@ -57,7 +57,7 @@ export class DoubaoClient {
         await response.body?.cancel();
         const authError = response.status === 401 || response.status === 403;
         throw new ServiceError(authError ? "upstream_auth_error" : "upstream_http_error", 502,
-          "Upstream HTTP request failed.", response.status >= 500 || response.status === 429);
+          "Upstream HTTP request failed.", response.status >= 500 || response.status === 429, null, undefined, response.status);
       }
       return { response, combined };
     } catch (error) { throw this.transportError(error, signal, combined); }

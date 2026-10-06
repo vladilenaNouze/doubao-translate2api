@@ -6,6 +6,7 @@ export class ServiceError extends Error {
     public retryable = false,
     public param: string | null = null,
     public upstreamCode?: number,
+    public upstreamStatus?: number,
   ) { super(message); }
 }
 
