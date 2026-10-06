@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+!.env.example
+.DS_Store
+node_modules
+dist
+coverage
+.artifacts
+playwright-report
+test-results
+data
+test
+docs
+doubao-translate2api_DEVELOPMENT_SPEC.md

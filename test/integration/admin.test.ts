@@ -1,0 +1,201 @@
+import { mkdtemp, writeFile, readFile, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, it, expect } from "vitest";
+import { createApp } from "../../src/app.js";
+import { loadConfig } from "../../src/config/env.js";
+import { startMock } from "../fixtures/mock-doubao.js";
+import { AccountPool, importCookie } from "../../src/admin/accounts.js";
+import { ServiceError } from "../../src/core/errors.js";
+import type { Fetch } from "../../src/doubao/client.js";
+
+const cleanup: Array<() => Promise<unknown>> = [];
+afterEach(async () => { for (const action of cleanup.splice(0).reverse()) await action(); });
+const cookie = (value: string) => `sessionid=${value}; sid_tt=${value}; uid_tt=${value}`;
+async function setup(options: { mode?: "expired" | "limited" | "bad-scene"; noFile?: boolean } = {}) {
+  const dir = await mkdtemp(join(tmpdir(), "doubao-admin-"));
+  cleanup.push(() => rm(dir, { recursive: true, force: true }));
+  const file = join(dir, "cookie.txt"), adminDir = join(dir, "admin");
+  if (!options.noFile) await writeFile(file, cookie("primary"));
+  const mock = await startMock(); cleanup.push(mock.close);
+  const seen: string[] = [];
+  const fetcher: Fetch = async (url, init) => {
+    const upstreamCookie = new Headers(init?.headers).get("cookie") ?? "";
+    seen.push(upstreamCookie);
+    if (String(url).includes("stream_article_translate")) {
+      if (options.mode === "bad-scene") return Response.json({ code: 710010202 });
+      if (upstreamCookie.includes("sessionid=primary")) {
+        if (options.mode === "expired") return Response.json({ code: 710012001 });
+        if (options.mode === "limited") return new Response("", { status: 429 });
+      }
+    }
+    return mock.fetcher(url, init);
+  };
+  const config = loadConfig({ API_KEY: "client-key", LOG_LEVEL: "silent", ADMIN_ENABLED: "true",
+    DOUBAO_COOKIE_FILE: file, ADMIN_DATA_DIR: adminDir, DOUBAO_MAX_RETRIES: "0" });
+  const app = createApp(config, { fetcher }); cleanup.push(() => app.close());
+  await app.ready();
+  const password = (await readFile(join(adminDir, "initial-password.txt"), "utf8")).trim();
+  async function login(value = password) {
+    const result = await app.inject({ method: "POST", url: "/admin/api/login", payload: { password: value } });
+    const header = result.headers["set-cookie"];
+    const signedCookie = (Array.isArray(header) ? header[0] : header)?.split(";")[0] ?? "";
+    return { result, headers: { cookie: signedCookie, "x-admin-csrf": result.json().csrf ?? "" } };
+  }
+  const session = await login();
+  async function request(path: string, method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" = "GET", body?: unknown) {
+    return app.inject({ method, url: "/admin/api" + path, headers: session.headers,
+      ...(method === "GET" ? {} : { payload: body ?? {} }) });
+  }
+  async function translate(text = "hello") {
+    return app.inject({ method: "POST", url: "/v1/chat/completions", headers: { "x-api-key": "client-key" },
+      payload: { model: "doubao-ai", target_lang: "zh", messages: [{ role: "user", content: text }] } });
+  }
+  async function add(name = "backup", value = "backup") {
+    const response = await request("/accounts", "POST", { name, cookie: cookie(value) });
+    expect(response.statusCode).toBe(200);
+    return response.json().id as string;
+  }
+  return { app, file, config, dir, adminDir, password, login, session, request, add, translate, seen, mock };
+}
+describe("management authentication", () => {
+  it("generates a private persistent password and protects management independently", async () => {
+    const { app, adminDir, password, session, config } = await setup();
+    expect(password.length).toBeGreaterThanOrEqual(32);
+    expect((await stat(join(adminDir, "initial-password.txt"))).mode & 0o777).toBe(0o600);
+    const credentials = await readFile(join(adminDir, "credentials.json"), "utf8");
+    expect(credentials).not.toContain(password);
+    expect(session.result.statusCode).toBe(200);
+    expect(session.result.headers["set-cookie"]).toContain("HttpOnly");
+    expect(session.result.headers["set-cookie"]).toContain("SameSite=Strict");
+    expect((await app.inject({ url: "/admin/api/accounts", headers: { "x-api-key": "client-key" } })).statusCode).toBe(401);
+    expect((await app.inject({ url: "/v1/models", headers: session.headers })).statusCode).toBe(401);
+    const html = await app.inject({ url: "/admin" });
+    expect(html.statusCode).toBe(200);
+    expect(html.headers["content-security-policy"]).toContain("frame-ancestors 'none'");
+    expect(html.body).not.toContain(password);
+    const restarted = createApp(config, { fetcher: async () => Response.json({ code: 0 }) });
+    cleanup.push(() => restarted.close()); await restarted.ready();
+    expect((await readFile(join(adminDir, "initial-password.txt"), "utf8")).trim()).toBe(password);
+  });
+  it("rejects CSRF, foreign origins and API-key-only admin access", async () => {
+    const { app, session } = await setup();
+    for (const headers of [
+      { cookie: session.headers.cookie },
+      { ...session.headers, origin: "https://attacker.example" },
+      { "x-api-key": "client-key" },
+    ]) {
+      expect((await app.inject({ method: "POST", url: "/admin/api/accounts", headers,
+        payload: { name: "bad", cookie: cookie("bad") } })).statusCode).toBeGreaterThanOrEqual(400);
+    }
+  });
+  it("limits login attempts, revokes logout and rejects old sessions after password change", async () => {
+    const { app, request, session, password, login, adminDir } = await setup();
+    expect((await request("/password", "PUT", { currentPassword: password, newPassword: "a-new-long-password" })).statusCode).toBe(200);
+    expect((await app.inject({ url: "/admin/api/accounts", headers: session.headers })).statusCode).toBe(401);
+    await expect(readFile(join(adminDir, "initial-password.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+    const next = await login("a-new-long-password");
+    expect(next.result.statusCode).toBe(200);
+    expect((await app.inject({ method: "POST", url: "/admin/api/logout", headers: next.headers, payload: {} })).statusCode).toBe(200);
+    expect((await app.inject({ url: "/admin/api/session", headers: next.headers })).statusCode).toBe(401);
+    for (let i = 0; i < 5; i++) expect((await login("wrong-password")).result.statusCode).toBe(401);
+    expect((await login("a-new-long-password")).result.statusCode).toBe(429);
+  });
+});
+
+describe("cookie management and scheduling", () => {
+  it("imports exported JSON, filters domains and never returns cookie values", async () => {
+    const { request, adminDir } = await setup();
+    const entries = ["sessionid", "sid_tt", "uid_tt"].map(name => ({ name, value: "managed-cookie-secret", domain: ".doubao.com" }));
+    entries.push({ name: "other", value: "foreign-secret", domain: "example.com" });
+    const result = await request("/accounts", "POST", { name: "JSON账号", cookie: JSON.stringify(entries) });
+    expect(result.statusCode).toBe(200);
+    const listing = await request("/accounts");
+    expect(listing.body).not.toContain("managed-cookie-secret");
+    expect(listing.body).not.toContain("primary");
+    expect((await readFile(join(adminDir, "accounts.json"), "utf8"))).not.toContain("foreign-secret");
+    expect((await stat(join(adminDir, "accounts.json"))).mode & 0o777).toBe(0o600);
+    for (const value of ["sessionid=x", "sessionid=x\r\nbad=true; sid_tt=x; uid_tt=x", "[]"]) {
+      expect((await request("/accounts", "POST", { name: "bad", cookie: value })).statusCode).toBe(400);
+    }
+  });
+  it("can update, disable, probe and delete without overwriting the existing file", async () => {
+    const { add, request, file } = await setup();
+    const id = await add();
+    expect((await request(`/accounts/${id}/probe`, "POST")).json().authenticated).toBe(true);
+    expect((await request(`/accounts/${id}`, "PATCH", { cookie: cookie("updated"), name: "new" })).statusCode).toBe(200);
+    expect((await request(`/accounts/${id}`, "PATCH", { enabled: false })).statusCode).toBe(200);
+    expect((await request("/settings", "PUT", { mode: "manual", activeId: id })).statusCode).toBe(400);
+    expect((await request("/accounts/file", "DELETE")).statusCode).toBe(400);
+    expect((await request(`/accounts/${id}`, "DELETE")).statusCode).toBe(200);
+    expect((await readFile(file, "utf8"))).toBe(cookie("primary"));
+  });
+  it("round robins per request and pins multi-batch requests to one account", async () => {
+    const { add, request, translate, seen } = await setup();
+    await add();
+    expect((await request("/settings", "PUT", { mode: "round-robin", activeId: "file" })).statusCode).toBe(200);
+    for (let i = 0; i < 4; i++) expect((await translate()).statusCode).toBe(200);
+    expect(seen.map(x => x.includes("sessionid=primary"))).toEqual([true, false, true, false]);
+    seen.length = 0;
+    const paragraphs = Array.from({ length: 51 }, (_, i) => `p${i}`).join("\n\n");
+    expect((await translate(paragraphs)).statusCode).toBe(200);
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toBe(seen[1]);
+  });
+  it.each(["expired", "limited"] as const)("fails over %s cookies and skips them on the next request", async mode => {
+    const { add, request, translate, seen } = await setup({ mode });
+    const id = await add();
+    expect((await translate()).statusCode).toBe(200);
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toContain("sessionid=primary");
+    expect(seen[1]).toContain("sessionid=backup");
+    const state = (await request("/accounts")).json();
+    expect(state.activeId).toBe(id);
+    expect(state.accounts.find((x: { id: string }) => x.id === "file").health.status).toBe(mode === "expired" ? "invalid" : "cooldown");
+    seen.length = 0;
+    expect((await translate()).statusCode).toBe(200);
+    expect(seen).toHaveLength(1); expect(seen[0]).toContain("sessionid=backup");
+  });
+  it("does not fail over known parameter errors or manual mode", async () => {
+    const bad = await setup({ mode: "bad-scene" }); await bad.add();
+    expect((await bad.translate()).statusCode).toBe(502);
+    expect(bad.seen).toHaveLength(1);
+    const manual = await setup({ mode: "expired" }); await manual.add();
+    await manual.request("/settings", "PUT", { mode: "manual", activeId: "file" });
+    expect((await manual.translate()).statusCode).toBe(502);
+    expect(manual.seen).toHaveLength(1);
+  });
+  it("handles missing local files and imported-only pools", async () => {
+    const { add, request, translate, app } = await setup({ noFile: true });
+    expect((await translate()).json().error.code).toBe("no_available_cookie");
+    expect((await app.inject({ url: "/auth/status", headers: { "x-api-key": "client-key" } })).json().reason).toBe("cookie_missing");
+    await add();
+    expect((await translate()).statusCode).toBe(200);
+    expect((await request("/accounts")).json().accounts.find((x: { id: string }) => x.id === "file").health.status).toBe("invalid");
+  });
+  it("preserves settings across restart and ignores health results for replaced credentials", async () => {
+    const { config, add, request } = await setup();
+    const id = await add();
+    await request("/settings", "PUT", { mode: "round-robin", activeId: id });
+    const pool = new AccountPool(config);
+    await pool.initialize();
+    expect((await pool.list()).mode).toBe("round-robin");
+    const lease = await pool.choose(new Set(["file"]));
+    await pool.update(lease.id, { cookie: cookie("replacement") });
+    await pool.failed(lease.id, new ServiceError("upstream_auth_error", 502, "Expired"), lease.revision);
+    expect((await pool.list()).accounts.find(x => x.id === lease.id)?.health.status).toBe("unknown");
+  });
+  it("recovers expired file credentials after a hot replacement", async () => {
+    const { config, file } = await setup();
+    const pool = new AccountPool(config); await pool.initialize();
+    const lease = await pool.choose();
+    await pool.failed(lease.id, new ServiceError("upstream_auth_error", 502, "Expired"), lease.revision);
+    await expect(pool.choose()).rejects.toMatchObject({ code: "no_available_cookie" });
+    await writeFile(file, cookie("replacement"));
+    expect((await pool.choose()).id).toBe("file");
+  });
+  it("accepts Cookie header labels but rejects unsafe exports", () => {
+    expect(importCookie("Cookie: " + cookie("header")).complete).toBe(true);
+    expect(() => importCookie(JSON.stringify([{ name: "sessionid", value: "x;y" }]))).toThrow();
+  });
+});

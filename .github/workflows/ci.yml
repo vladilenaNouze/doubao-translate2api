@@ -1,0 +1,70 @@
+name: CI
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:ui
+      - run: npm run smoke:local
+      - run: npm audit --omit=dev
+      - run: git diff --check
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t doubao-translate2api:test .
+      - name: Container smoke
+        env:
+          API_KEY: ci-test-key
+        run: |
+          mkdir -p /tmp/doubao-cookie
+          mkdir -p /tmp/doubao-admin
+          sudo chown 1000:1000 /tmp/doubao-admin
+          printf 'sessionid=fixture-v1; sid_tt=fixture; uid_tt=fixture\n' > /tmp/doubao-cookie/cookie.txt
+          chmod 600 /tmp/doubao-cookie/cookie.txt
+          sudo chown 1000:1000 /tmp/doubao-cookie/cookie.txt
+          docker run -d --name doubao-test -p 127.0.0.1:8390:8000 -e API_KEY -v /tmp/doubao-cookie:/data:ro -v /tmp/doubao-admin:/admin-data doubao-translate2api:test
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8390/health >/dev/null; then break; fi
+            sleep 1
+          done
+          sh scripts/smoke.sh
+          docker exec doubao-test node --input-type=module -e "import { loadCookie } from './dist/auth/cookie-store.js'; if (process.getuid() === 0 || !(await loadCookie('/data/cookie.txt')).cookie.includes('fixture-v1')) process.exit(1)"
+          printf 'sessionid=fixture-v2; sid_tt=fixture; uid_tt=fixture\n' > /tmp/doubao-cookie/cookie-next.txt
+          chmod 600 /tmp/doubao-cookie/cookie-next.txt
+          sudo chown 1000:1000 /tmp/doubao-cookie/cookie-next.txt
+          mv /tmp/doubao-cookie/cookie-next.txt /tmp/doubao-cookie/cookie.txt
+          docker exec doubao-test node --input-type=module -e "import { loadCookie } from './dist/auth/cookie-store.js'; if (!(await loadCookie('/data/cookie.txt')).cookie.includes('fixture-v2')) process.exit(1)"
+          docker exec doubao-test node --input-type=module -e "import { readFile, stat, writeFile } from 'node:fs/promises'; const p='/admin-data/initial-password.txt'; if (((await stat(p)).mode & 511) !== 384) process.exit(1); await writeFile('/admin-data/password-before-restart', await readFile(p), {mode:384})"
+          docker restart doubao-test
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8390/health >/dev/null; then break; fi
+            sleep 1
+          done
+          sh scripts/smoke.sh
+          curl -fsS http://127.0.0.1:8390/admin >/dev/null
+          docker exec doubao-test node --input-type=module -e "import { readFile, unlink } from 'node:fs/promises'; const old='/admin-data/password-before-restart'; if (!(await readFile(old)).equals(await readFile('/admin-data/initial-password.txt'))) process.exit(1); await unlink(old)"
+      - name: Container logs and cleanup
+        if: always()
+        run: |
+          docker logs doubao-test || true
+          docker rm -f doubao-test || true
