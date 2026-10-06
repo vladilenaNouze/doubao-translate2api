@@ -4,7 +4,8 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
-COPY scripts/build-ui.mjs ./scripts/build-ui.mjs
+COPY scripts/build-ui.mjs scripts/build-plugin.mjs ./scripts/
+COPY LICENSE ./LICENSE
 RUN npm run build
 
 FROM node:24-alpine AS runtime

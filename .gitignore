@@ -11,3 +11,5 @@ data/*
 !data/.gitkeep
 .DS_Store
 /docs
+magpie-plugin/LICENSE
+magpie-plugin/THIRD_PARTY_LICENSES.txt
