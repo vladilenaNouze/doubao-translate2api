@@ -44,6 +44,14 @@
       <div class="connection">
         <div><h2>连接地址</h2><span class="mono" id="base-url"></span></div><button id="copy-base" class="icon-button" title="复制 Base URL" aria-label="复制 Base URL"><i data-lucide="copy"></i></button>
       </div>
+      <div class="api-key-section">
+        <div class="security-heading"><h2>API Key</h2><span id="api-key-source" class="badge neutral"></span></div>
+        <div class="api-key-controls">
+          <div class="password-input"><input id="api-key-value" type="password" readonly autocomplete="off" aria-label="API Key" placeholder="••••••••••••••••"><button id="reveal-api-key" type="button" class="icon-button" title="显示 API Key" aria-label="显示 API Key"><i data-lucide="eye"></i></button></div>
+          <button id="copy-api-key" class="icon-button" title="复制 API Key" aria-label="复制 API Key"><i data-lucide="copy"></i></button>
+          <button id="rotate-api-key" class="icon-button" title="重新生成 API Key" aria-label="重新生成 API Key"><i data-lucide="refresh-cw"></i></button>
+        </div>
+      </div>
       <div class="models"><span class="section-label">模型</span><code>doubao-ai</code><code>volcengine-translate</code><code>microsoft-translator</code></div>
     </section>
     <section id="security-panel" role="tabpanel" aria-labelledby="security-tab" hidden>
@@ -78,6 +86,14 @@
       <div class="dialog-heading"><h2>删除 Cookie</h2><button type="button" class="icon-button" data-close="delete-dialog" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button></div>
       <p class="delete-name" id="delete-name"></p>
       <div class="dialog-actions"><button type="button" class="button" data-close="delete-dialog">取消</button><button id="delete-submit" class="button danger" type="submit"><i data-lucide="trash-2"></i>删除</button></div>
+    </form>
+  </dialog>
+  <dialog id="api-key-dialog">
+    <form id="api-key-form">
+      <div class="dialog-heading"><h2>重新生成 API Key</h2><button type="button" class="icon-button" data-close="api-key-dialog" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button></div>
+      <p class="delete-name">旧 Key 将立即失效，需要更新客户端中的 API Key。</p>
+      <p id="api-key-error" class="form-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="button" data-close="api-key-dialog">取消</button><button id="api-key-submit" class="button danger" type="submit"><i data-lucide="refresh-cw"></i>确认重新生成</button></div>
     </form>
   </dialog>
   <div id="toast" role="status" class="toast" hidden></div>

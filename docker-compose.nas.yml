@@ -1,17 +1,15 @@
 services:
   doubao-translate2api:
-    image: muzileee/doubao-translate2api:${IMAGE_TAG:-0.1.1}
+    image: "${DOUBAO_IMAGE:-muzileee/doubao-translate2api:0.1.1}"
     user: "${APP_UID:-1000}:${APP_GID:-1000}"
     restart: unless-stopped
-    env_file:
-      - .env
+    ports:
+      - "${BIND_ADDRESS:-0.0.0.0}:8390:8000"
     environment:
       HOST: "0.0.0.0"
       PORT: "8000"
-      DOUBAO_COOKIE_FILE: "/data/cookie.txt"
+      ADMIN_ENABLED: "true"
       ADMIN_DATA_DIR: "/admin-data"
-    ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:8390:8000"
+      ALLOW_NO_AUTH: "false"
     volumes:
-      - ./data:/data:ro
       - ./data/admin:/admin-data

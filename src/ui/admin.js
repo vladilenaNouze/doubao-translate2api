@@ -14,6 +14,9 @@ const errors = {
   admin_login_required: "登录已过期，请重新登录", admin_csrf_error: "会话已更新，请刷新后重试",
   admin_storage_error: "保存失败，请检查数据目录权限", account_not_found: "这份 Cookie 已不存在",
   invalid_request: "请检查名称与 Cookie，Cookie 需包含 sessionid、sid_tt 和 uid_tt",
+  api_key_storage_error: "API Key 读写失败，请检查数据目录权限",
+  api_key_managed_externally: "API Key 由环境变量配置，请修改部署配置",
+  api_auth_disabled: "API 鉴权已关闭",
 };
 async function api(path, method = "GET", body) {
   const response = await fetch("/admin/api" + path, {
@@ -44,6 +47,7 @@ function showLogin() {
   for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
   $("account-form").reset(); $("password-form").reset(); editing = null; deleting = null;
   data = { mode: "failover", activeId: "file", accounts: [] };
+  clearApiKey();
   selectTab("cookies-tab");
   document.querySelectorAll("[data-reveal]").forEach(button => {
     $(button.dataset.reveal).type = "password";
@@ -54,6 +58,7 @@ function showLogin() {
 }
 async function showDashboard() {
   await reload();
+  await loadApiKey();
   $("login-screen").hidden = true; $("dashboard").hidden = false; $("user-actions").hidden = false;
   $("base-url").textContent = location.origin + "/v1";
 }
@@ -98,6 +103,65 @@ function render() {
   iconify();
 }
 async function reload() { data = await api("/accounts"); render(); }
+function clearApiKey() {
+  $("api-key-value").value = ""; $("api-key-value").type = "password";
+  const button = $("reveal-api-key");
+  button.title = button.ariaLabel = "显示 API Key";
+  button.innerHTML = '<i data-lucide="eye"></i>';
+}
+async function loadApiKey() {
+  const metadata = await api("/api-key");
+  clearApiKey();
+  $("api-key-source").textContent = metadata.source === "generated" ? "自动生成" :
+    metadata.source === "disabled" ? "鉴权已关闭" : `环境变量 · ${metadata.count} 个 Key`;
+  $("reveal-api-key").disabled = $("copy-api-key").disabled = metadata.source === "disabled";
+  $("rotate-api-key").hidden = !metadata.canRotate;
+  iconify();
+}
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    try { await navigator.clipboard.writeText(text); return; } catch { /* HTTP NAS pages use the fallback. */ }
+  }
+  const input = document.createElement("textarea");
+  input.value = text; input.style.position = "fixed"; input.style.top = "-9999px";
+  document.body.append(input);
+  try {
+    input.select();
+    if (!document.execCommand("copy")) throw new Error("Clipboard unavailable.");
+  } finally { input.remove(); }
+}
+async function revealApiKey() {
+  const session = csrf;
+  const result = await api("/api-key/reveal", "POST", {});
+  if (!csrf || csrf !== session) throw new Error("登录已过期，请重新登录");
+  return result.key;
+}
+$("reveal-api-key").addEventListener("click", () => busy($("reveal-api-key"), async () => {
+  if ($("api-key-value").type === "text") { clearApiKey(); iconify(); return; }
+  try {
+    $("api-key-value").value = await revealApiKey();
+    $("api-key-value").type = "text";
+    const button = $("reveal-api-key");
+    button.title = button.ariaLabel = "隐藏 API Key"; button.innerHTML = '<i data-lucide="eye-off"></i>';
+    iconify();
+  } catch (error) { toast(error.message, true); }
+}));
+$("copy-api-key").addEventListener("click", () => busy($("copy-api-key"), async () => {
+  try { await copyText(await revealApiKey()); toast("API Key 已复制"); }
+  catch { toast("复制失败，可显示 API Key 后手动复制", true); }
+}));
+$("rotate-api-key").addEventListener("click", () => {
+  $("api-key-error").textContent = ""; $("api-key-dialog").showModal();
+});
+$("api-key-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  await busy($("api-key-submit"), async () => {
+    try {
+      await api("/api-key/rotate", "POST", {}); clearApiKey(); iconify();
+      $("api-key-dialog").close(); toast("API Key 已更新，旧 Key 已失效");
+    } catch (error) { $("api-key-error").textContent = error.message; }
+  });
+});
 function openAccount(account = null) {
   editing = account;
   $("account-form").reset(); $("account-error").textContent = "";
@@ -216,6 +280,7 @@ document.querySelectorAll("input[name=mode]").forEach(input => input.addEventLis
   changeRouting(input.value, data.accounts.find(x => x.id === data.activeId && x.enabled)?.id ?? data.accounts.find(x => x.enabled)?.id ?? data.activeId)));
 $("preferred-account").addEventListener("change", () => changeRouting(data.mode, $("preferred-account").value));
 function selectTab(id) {
+  clearApiKey(); iconify();
   for (const tabId of ["cookies-tab", "security-tab"]) {
     const active = id === tabId;
     $(tabId).ariaSelected = String(active); $(tabId).classList.toggle("active", active); $(tabId).tabIndex = active ? 0 : -1;
@@ -234,7 +299,7 @@ for (const id of ["cookies-tab", "security-tab"]) {
   });
 }
 $("copy-base").addEventListener("click", async () => {
-  try { await navigator.clipboard.writeText(location.origin + "/v1"); toast("连接地址已复制"); }
+  try { await copyText(location.origin + "/v1"); toast("连接地址已复制"); }
   catch { toast("无法访问剪贴板", true); }
 });
 $("generate-password").addEventListener("click", () => {

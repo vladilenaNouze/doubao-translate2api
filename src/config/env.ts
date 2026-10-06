@@ -34,7 +34,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
   const config = parsed.data;
   const keys = (config.API_KEYS !== undefined ? config.API_KEYS : config.API_KEY ?? "")
     .split(",").map(x => x.trim()).filter(Boolean);
-  if (!config.ALLOW_NO_AUTH && !keys.length) throw new Error("API_KEY or API_KEYS is required.");
+  if (!config.ALLOW_NO_AUTH && config.API_KEYS !== undefined && !keys.length)
+    throw new Error("API_KEYS must contain at least one key.");
   return { ...config, keys, ADMIN_DATA_DIR: config.ADMIN_DATA_DIR ?? join(dirname(config.DOUBAO_COOKIE_FILE), "admin") };
 }
 export type Config = ReturnType<typeof loadConfig>;

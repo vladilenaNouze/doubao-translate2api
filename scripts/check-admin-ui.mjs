@@ -1,4 +1,4 @@
-import { chromium } from "@playwright/test";
+import { chromium, expect } from "@playwright/test";
 import { mkdtemp, readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +10,7 @@ const dir = await mkdtemp(join(tmpdir(), "doubao-ui-"));
 const cookie = "sessionid=fixture; sid_tt=fixture; uid_tt=fixture";
 await writeFile(join(dir, "cookie.txt"), cookie);
 const app = createApp(loadConfig({
-  API_KEY: "ui-fixture-key", LOG_LEVEL: "silent", DOUBAO_COOKIE_FILE: join(dir, "cookie.txt"),
+  LOG_LEVEL: "silent", DOUBAO_COOKIE_FILE: join(dir, "cookie.txt"),
 }), { fetcher: async () => Response.json({ code: 0 }) });
 let browser;
 try {
@@ -21,6 +21,7 @@ try {
     ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } : {}),
   });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   await page.goto(url + "/admin");
@@ -30,6 +31,39 @@ try {
   await page.getByLabel("管理密码", { exact: true }).fill(password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.locator(".account-name").filter({ hasText: "本地 Cookie 文件" }).waitFor();
+  const keyPath = join(dir, "admin", "api-key.txt");
+  const initialKey = (await readFile(keyPath, "utf8")).trim();
+  assert.equal(await page.getByLabel("API Key", { exact: true }).inputValue(), "");
+  await page.getByRole("button", { name: "显示 API Key", exact: true }).click();
+  await expect(page.getByLabel("API Key", { exact: true })).toHaveValue(initialKey);
+  await page.getByRole("button", { name: "隐藏 API Key", exact: true }).click();
+  assert.equal(await page.getByLabel("API Key", { exact: true }).inputValue(), "");
+  await page.getByRole("button", { name: "复制 API Key", exact: true }).click();
+  await expect(page.getByRole("button", { name: "复制 API Key", exact: true })).toBeEnabled();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), initialKey);
+  // Exercise the fallback used on NAS pages served over plain HTTP.
+  await page.evaluate(() => {
+    window.testClipboard = navigator.clipboard;
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+  });
+  await page.getByRole("button", { name: "复制 API Key", exact: true }).click();
+  await expect(page.getByRole("button", { name: "复制 API Key", exact: true })).toBeEnabled();
+  assert.equal(await page.evaluate(() => window.testClipboard.readText()), initialKey);
+  await page.evaluate(() => { Object.defineProperty(navigator, "clipboard", { value: window.testClipboard, configurable: true }); });
+  await page.getByRole("button", { name: "重新生成 API Key", exact: true }).click();
+  await page.locator("#api-key-dialog").getByRole("button", { name: "取消", exact: true }).click();
+  assert.equal((await readFile(keyPath, "utf8")).trim(), initialKey);
+  await page.getByRole("button", { name: "重新生成 API Key", exact: true }).click();
+  await page.getByRole("button", { name: "确认重新生成", exact: true }).click();
+  await page.locator("#api-key-dialog").waitFor({ state: "hidden" });
+  const rotatedKey = (await readFile(keyPath, "utf8")).trim();
+  assert.notEqual(rotatedKey, initialKey);
+  assert.equal((await fetch(url + "/v1/models", { headers: { "x-api-key": initialKey } })).status, 401);
+  assert.equal((await fetch(url + "/v1/models", { headers: { "x-api-key": rotatedKey } })).status, 200);
+  assert.equal(await page.getByLabel("API Key", { exact: true }).inputValue(), "");
+  await page.reload();
+  await page.locator(".account-name").filter({ hasText: "本地 Cookie 文件" }).waitFor();
+  assert.equal(await page.getByLabel("API Key", { exact: true }).inputValue(), "");
   const screenshots = join(process.cwd(), ".artifacts");
   await mkdir(screenshots, { recursive: true });
   for (const name of ["备用账号", "工作账号 · 长名称".repeat(4)]) {
@@ -77,11 +111,29 @@ try {
   await page.getByLabel("管理密码", { exact: true }).fill(nextPassword);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.locator(".account-name").filter({ hasText: "本地 Cookie 文件" }).waitFor();
+  if (process.env.UPDATE_README_IMAGES === "true") {
+    const longName = "工作账号 · 长名称".repeat(4);
+    await page.getByRole("button", { name: "编辑 " + longName, exact: true }).click();
+    await page.getByLabel("账号名称", { exact: true }).fill("备用账号");
+    await page.getByRole("button", { name: "保存", exact: true }).click();
+    await page.locator(".account-name").filter({ hasText: "备用账号" }).waitFor();
+    await page.locator('input[name="mode"][value="failover"]').check();
+    await page.getByRole("button", { name: "检测 本地 Cookie 文件", exact: true }).click();
+    await expect(page.locator('[data-account="file"] .badge')).toHaveText("登录有效");
+    await page.locator("#toast").waitFor({ state: "hidden" });
+    assert.equal(await page.getByLabel("API Key", { exact: true }).inputValue(), "");
+    const assets = join(process.cwd(), "assets");
+    await mkdir(assets, { recursive: true });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.screenshot({ path: join(assets, "admin-desktop.png"), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: join(assets, "admin-mobile.png"), fullPage: true });
+  }
   await page.getByRole("button", { name: "退出登录", exact: true }).click();
   await page.getByRole("heading", { name: "管理登录", exact: true }).waitFor();
   await page.screenshot({ path: join(screenshots, "admin-login-mobile.png"), fullPage: true });
   assert.deepEqual(errors, []);
-  console.log("Admin UI desktop/mobile workflows passed; screenshots in .artifacts.");
+  console.log("Admin UI desktop/mobile and API key reveal/copy/rotation workflows passed; screenshots in .artifacts.");
 } finally {
   await browser?.close();
   await app.close();

@@ -9,8 +9,10 @@ import { buildRequestBody } from "../../src/doubao/client.js";
 import { MODEL_ENGINE_MAP } from "../../src/core/models.js";
 
 describe("configuration and request contract", () => {
-  it("requires auth and validates numeric configuration without exposing secrets", () => {
-    expect(() => loadConfig({})).toThrow("API_KEY");
+  it("defaults to generated auth and validates numeric configuration without exposing secrets", () => {
+    expect(loadConfig({}).keys).toEqual([]);
+    expect(loadConfig({}).ALLOW_NO_AUTH).toBe(false);
+    expect(() => loadConfig({ API_KEYS: "" })).toThrow("API_KEYS");
     expect(loadConfig({ ALLOW_NO_AUTH: "true" }).PORT).toBe(8000);
     expect(loadConfig({ API_KEY: "one", API_KEYS: "two,three" }).keys).toEqual(["two", "three"]);
     for (const env of [{ PORT: "65536" }, { DOUBAO_DEFAULT_SCENE: "7" }, { DOUBAO_MAX_CONCURRENCY: "0" }])

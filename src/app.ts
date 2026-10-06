@@ -12,6 +12,7 @@ import { adaptRequest } from "./protocols/adapter.js";
 import { formatJSON, formatSSE } from "./protocols/format.js";
 import { AccountPool } from "./admin/accounts.js";
 import { registerAdmin } from "./admin/routes.js";
+import { ApiKeyStore } from "./auth/api-key-store.js";
 
 export function createApp(config: Config, options: { fetcher?: Fetch; logger?: FastifyServerOptions["logger"] } = {}) {
   const app = Fastify({
@@ -26,6 +27,8 @@ export function createApp(config: Config, options: { fetcher?: Fetch; logger?: F
   const client = new DoubaoClient(config, options.fetcher,
     (code, fields) => app.log.warn({ code, ...fields }, "Upstream diagnostic"));
   const pool = config.ADMIN_ENABLED ? new AccountPool(config) : undefined;
+  const apiKeys = new ApiKeyStore(config);
+  app.addHook("onReady", async () => { await apiKeys.initialize(); });
   const translator = new Translator(config, client, pool);
   const controllers = new Map<string, AbortController>();
   if (config.ALLOW_NO_AUTH) app.log.warn("API authentication is disabled.");
@@ -36,7 +39,7 @@ export function createApp(config: Config, options: { fetcher?: Fetch; logger?: F
   app.addHook("onRequest", async request => {
     const path = request.url.split("?")[0];
     const adminPath = config.ADMIN_ENABLED && (path === "/admin" || path?.startsWith("/admin/"));
-    if (path !== "/" && path !== "/health" && !adminPath) authenticate(request.headers, config.keys, config.ALLOW_NO_AUTH);
+    if (path !== "/" && path !== "/health" && !adminPath) authenticate(request.headers, apiKeys.keys, config.ALLOW_NO_AUTH);
   });
   app.setErrorHandler((error, request, reply) => {
     const fastifyStatus = (error as { statusCode?: number }).statusCode;
@@ -54,10 +57,10 @@ export function createApp(config: Config, options: { fetcher?: Fetch; logger?: F
     ...(request.url.split("?")[0] === "/v1/messages" ? { type: "error" } : {}),
     error: { type: "invalid_request_error", message: "Route not found.", code: "not_found" },
   }));
-  app.get("/", async () => ({ name: "doubao-translate2api", version: "0.1.0", status: "ok" }));
+  app.get("/", async () => ({ name: "doubao-translate2api", version: "0.1.1", status: "ok" }));
   app.get("/health", async () => ({ status: "ok" }));
   app.get("/info", async () => ({
-    name: "doubao-translate2api", version: "0.1.0",
+    name: "doubao-translate2api", version: "0.1.1",
     protocols: ["openai-chat", "openai-responses", "anthropic"],
     models: models.map(x => x.id), supported_languages: languages,
   }));
@@ -84,7 +87,7 @@ export function createApp(config: Config, options: { fetcher?: Fetch; logger?: F
   app.addHook("preClose", async () => {
     controllers.forEach(controller => controller.abort(new Error("Server shutting down.")));
   });
-  if (pool) registerAdmin(app, config, pool, translator, id => controllers.get(id)!.signal);
+  if (pool) registerAdmin(app, config, pool, translator, id => controllers.get(id)!.signal, apiKeys);
   app.get("/auth/status", async request => translator.authStatus(controllers.get(request.id)!.signal));
   for (const [path, protocol] of [
     ["/v1/chat/completions", "openai-chat"], ["/v1/responses", "openai-responses"], ["/v1/messages", "anthropic"],

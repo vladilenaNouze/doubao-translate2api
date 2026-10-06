@@ -63,8 +63,31 @@ jobs:
           sh scripts/smoke.sh
           curl -fsS http://127.0.0.1:8390/admin >/dev/null
           docker exec doubao-test node --input-type=module -e "import { readFile, unlink } from 'node:fs/promises'; const old='/admin-data/password-before-restart'; if (!(await readFile(old)).equals(await readFile('/admin-data/initial-password.txt'))) process.exit(1); await unlink(old)"
+      - name: NAS Compose with generated API key
+        env:
+          DOUBAO_IMAGE: doubao-translate2api:test
+          BIND_ADDRESS: "127.0.0.1"
+        run: |
+          docker stop doubao-test
+          sudo install -d -o 1000 -g 1000 -m 700 data/admin
+          docker compose -p doubao-nas-test -f docker-compose.nas.yml up -d
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8390/health >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8390/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8390/v1/models)" = 401
+          docker compose -p doubao-nas-test -f docker-compose.nas.yml exec -T doubao-translate2api node --input-type=module -e "import { readFile, stat } from 'node:fs/promises'; const p='/admin-data/api-key.txt'; const key=(await readFile(p,'utf8')).trim(); if (process.getuid()===0 || ((await stat(p)).mode & 511)!==384 || !(await fetch('http://127.0.0.1:8000/v1/models',{headers:{'x-api-key':key}})).ok) process.exit(1)"
+          docker compose -p doubao-nas-test -f docker-compose.nas.yml restart doubao-translate2api
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8390/health >/dev/null; then break; fi
+            sleep 1
+          done
+          docker compose -p doubao-nas-test -f docker-compose.nas.yml exec -T doubao-translate2api node --input-type=module -e "import { readFile } from 'node:fs/promises'; const key=(await readFile('/admin-data/api-key.txt','utf8')).trim(); if (!(await fetch('http://127.0.0.1:8000/v1/models',{headers:{'x-api-key':key}})).ok) process.exit(1)"
       - name: Container logs and cleanup
         if: always()
         run: |
           docker logs doubao-test || true
           docker rm -f doubao-test || true
+          DOUBAO_IMAGE=doubao-translate2api:test docker compose -p doubao-nas-test -f docker-compose.nas.yml logs || true
+          DOUBAO_IMAGE=doubao-translate2api:test docker compose -p doubao-nas-test -f docker-compose.nas.yml down || true
