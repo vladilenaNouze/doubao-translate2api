@@ -1,6 +1,6 @@
 # doubao-translate2api
 
-想法来自 linux.do 中帖子 https://linux.do/t/topic/2988583 
+想法来自 [linux.do](https://linux.do/) 中帖子 https://linux.do/t/topic/2988583 
 
 > **免责声明**
 >
