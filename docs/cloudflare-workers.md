@@ -1,7 +1,4 @@
 # Cloudflare Workers 部署指南
-
-Workers 版本是实验版本。已提供接口实现与本地 Workers 运行时测试；尚未完成真实 Cloudflare 出口到豆包、免费额度表现和真实沉浸式扩展的验收。
-
 Workers 让 Cloudflare 运行你的翻译接口，无需购买服务器、安装 Docker 或迁移域名。翻译仍由豆包网页接口完成，不使用 Workers AI。
 
 ## Lite 单文件版
