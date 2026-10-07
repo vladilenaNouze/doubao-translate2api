@@ -4,6 +4,48 @@ Workers 版本是实验版本。已提供接口实现与本地 Workers 运行时
 
 Workers 让 Cloudflare 运行你的翻译接口，无需购买服务器、安装 Docker 或迁移域名。翻译仍由豆包网页接口完成，不使用 Workers AI。
 
+## Lite 单文件版
+
+Lite 与完整版独立部署。入口为 `src/workers-lite/index.ts`，没有运行时导入，也不依赖 Node API、框架或 SDK。构建产物是一个 ESM JavaScript 文件：
+
+```sh
+npm run build:workers:lite
+```
+
+产物位于 `.artifacts/workers-lite/worker.js`，可打开检查或作为模块 Worker 使用。构建检查的是文件本身的 UTF-8 字节数，必须不超过 **32,000 字节**，不是 gzip 大小；若超过则构建失败，不写入新产物。体积以每次构建输出为准。
+
+Lite 仅提供：
+
+- `GET /health`：公开健康检查，不验证上游是否可用。
+- `POST /v1/chat/completions`：API Key 保护的纯文本翻译；模型为 `doubao-ai`。
+- 浏览器跨域预检及实际响应的 CORS 标头。
+
+使用同样的两个 Secret。命令行部署时必须指定 Lite 配置，避免把凭据设置到完整版 Worker：
+
+```sh
+npm run deploy:workers:lite
+npx wrangler secret put API_KEY --config wrangler.lite.jsonc
+npx wrangler secret put DOUBAO_COOKIE --config wrangler.lite.jsonc
+```
+
+Lite 默认名称为 `doubao-translate2api-lite`，可在 `wrangler.lite.jsonc` 修改。该配置会在部署或本地预览前执行单文件构建与体积检查。已有凭据时，运行 `npm run dev:workers:lite` 在本地预览。
+
+沉浸式翻译使用 Lite 地址的 `/v1/chat/completions`、模型 `doubao-ai`、对应 `API_KEY`，并**关闭流式输出**、使用下文的纯文本模板。支持 `Translate to Chinese:\n\n正文` 一类提示词前缀和独立一行的 `%%` 分隔符；前缀与分隔符不发送给豆包。支持 `target_lang` 或 `x-doubao-target-lang` 显式指定目标语言，否则读取简单提示词中的语言，最后使用 `DOUBAO_DEFAULT_TARGET_LANG`（默认 `zh`）。
+
+上游 SSE 仍会被解析，但客户端返回普通 JSON。Lite 不提供 Responses、Anthropic、其他引擎、模型列表、账号检查、管理页、账号池、排队和自动重试；不支持 HTML/YAML 模板、工具调用或任意聊天指令。复杂提示词请显式指定目标语言。返回的 `usage` 为零占位，不代表实际 token 用量。
+
+限制为：请求体 64 KiB、正文 20,000 个 JavaScript 字符单位、单行最多 10,000 字符；顺序发送最多四批，每批最多 50 行且 10,000 字符；单批上游响应 512 KiB、累计译文 256 KiB、单批超时 45 秒、总超时 90 秒。上游缺段、空译文、错误事件或缺少结束事件均整体失败，不返回部分成功。HTTP 401/403 归为上游访问拒绝，仅业务码 `710012001` 认定登录过期。
+
+验证命令：
+
+```sh
+npm run typecheck
+npm run test:workers
+npm run build:workers:lite
+```
+
+测试使用本地 Workers 运行时和模拟上游。单文件与体积达标不代表真实 Cloudflare 出口、本人 Cookie 或沉浸式扩展已经验收。
+
 ## 准备两个不同的凭据
 
 | 名称 | 用途 | 填在哪里 |

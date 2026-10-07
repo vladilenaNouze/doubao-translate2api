@@ -54,6 +54,8 @@ Workers 版本共用翻译核心，提供三种协议和翻译引擎。通过 Cl
 
 部署页面的构建命令使用 `npm run build:workers`，部署命令使用 `npm run deploy:workers`，项目根目录保持仓库根目录。默认支持沉浸式纯文本 `%%` 分隔格式，暂不支持 YAML 和富文本模板。完整配置、Cookie 获取、接口检查和排错步骤见指南。
 
+另提供 [Lite 单文件版](docs/cloudflare-workers.md#lite-单文件版)：构建出的独立 ESM JavaScript 必须小于等于 32,000 字节，超限会让构建失败。运行 `npm run build:workers:lite` 生成 `.artifacts/workers-lite/worker.js`。只保留 `doubao-ai` 的非流式 Chat Completions、健康检查、纯文本分批翻译和 API Key 鉴权。
+
 ## Docker 部署
 
 镜像：[muzileee/doubao-translate2api](https://hub.docker.com/r/muzileee/doubao-translate2api)，标签 `latest`，当前版本 `0.1.3`，支持 AMD64 / ARM64。
