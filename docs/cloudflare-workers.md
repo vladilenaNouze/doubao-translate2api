@@ -6,6 +6,10 @@ Workers 让 Cloudflare 运行你的翻译接口，无需购买服务器、安装
 
 ## Lite 单文件版
 
+[![Deploy Lite to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/mu-zi-lee/doubao-translate2api/tree/main/deploy/workers-lite)
+
+点击上面的 **Lite 专用按钮**，按页面提示登录 Cloudflare、连接 GitHub、创建自己的仓库并填写 `API_KEY` 与 `DOUBAO_COOKIE`。按钮指向 `deploy/workers-lite`，该目录将成为新仓库根目录；构建命令为 `npm run build`，部署命令为 `npm run deploy`，Node.js 使用 24。不要填写完整版的构建命令。如果页面未收集 Secret，在部署后的 Worker 设置里补齐并部署设置。完整步骤见 [Lite 目录说明](../deploy/workers-lite/README.md)。
+
 Lite 与完整版独立部署。入口为 `src/workers-lite/index.ts`，没有运行时导入，也不依赖 Node API、框架或 SDK。构建产物是一个 ESM JavaScript 文件：
 
 ```sh
@@ -13,6 +17,8 @@ npm run build:workers:lite
 ```
 
 产物位于 `.artifacts/workers-lite/worker.js`，可打开检查或作为模块 Worker 使用。构建检查的是文件本身的 UTF-8 字节数，必须不超过 **32,000 字节**，不是 gzip 大小；若超过则构建失败，不写入新产物。体积以每次构建输出为准。
+
+构建同时更新按钮部署使用的 `deploy/workers-lite/worker.js`。修改源码后需将该文件一起提交；`npm run check:workers:lite` 及 CI 会拒绝过期产物。Lite 目录含独立配置、锁文件和大小检查脚本，不依赖父目录。
 
 Lite 仅提供：
 

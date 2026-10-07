@@ -50,6 +50,12 @@ Workers 版本共用翻译核心，提供三种协议和翻译引擎。通过 Cl
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/mu-zi-lee/doubao-translate2api)
 
+**Lite 单文件版部署：**
+
+[![Deploy Lite to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/mu-zi-lee/doubao-translate2api/tree/main/deploy/workers-lite)
+
+Lite 按钮使用独立部署目录，只包含 Lite 运行脚本与部署文件。新仓库根目录保持默认，构建命令为 `npm run build`，部署命令为 `npm run deploy`；填写 `API_KEY` 和 `DOUBAO_COOKIE` 后即可进行翻译测试。客户端需关闭流式输出。详见 [Lite 部署说明](deploy/workers-lite/README.md)。
+
 实验版已包含本地 Workers 运行时测试，真实 Cloudflare 到豆包请求和扩展联调仍需验收。按钮需要默认分支包含 Workers 实现；尚未同步源码时，可按[新手部署指南](docs/cloudflare-workers.md)使用本地命令部署。
 
 部署页面的构建命令使用 `npm run build:workers`，部署命令使用 `npm run deploy:workers`，项目根目录保持仓库根目录。默认支持沉浸式纯文本 `%%` 分隔格式，暂不支持 YAML 和富文本模板。完整配置、Cookie 获取、接口检查和排错步骤见指南。

@@ -25,7 +25,16 @@ jobs:
       - run: npm run build:workers
         env:
           CLOUDFLARE_SEND_METRICS: "false"
+      - run: npm run check:workers:lite
       - run: npm run build:workers:lite
+      - run: npm ci
+        working-directory: deploy/workers-lite
+      - run: npm run build
+        working-directory: deploy/workers-lite
+      - run: npx wrangler deploy --dry-run
+        working-directory: deploy/workers-lite
+        env:
+          CLOUDFLARE_SEND_METRICS: "false"
       - run: npx playwright install --with-deps chromium
       - run: npm run test:ui
       - run: npm run smoke:local

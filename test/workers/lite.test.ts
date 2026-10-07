@@ -18,7 +18,8 @@ beforeAll(async () => {
   expect(result.outputFiles).toHaveLength(1);
   expect(result.outputFiles[0]!.contents.byteLength).toBeLessThanOrEqual(32_000);
   expect(Buffer.byteLength(await readFile("src/workers-lite/index.ts", "utf8"))).toBeLessThanOrEqual(32_000);
-  bundle = result.outputFiles[0]!.text;
+  bundle = await readFile("deploy/workers-lite/worker.js", "utf8");
+  expect(bundle).toBe(result.outputFiles[0]!.text);
 });
 afterEach(async () => {
   vi.restoreAllMocks(); vi.unstubAllGlobals();
