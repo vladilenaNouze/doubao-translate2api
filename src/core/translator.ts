@@ -1,18 +1,18 @@
-import { setTimeout as delay } from "node:timers/promises";
-import type { Config } from "../config/env.js";
-import { DoubaoClient } from "../doubao/client.js";
+import { delay } from "./delay.js";
+import type { TranslationConfig } from "./translation-config.js";
+import type { DoubaoTransport } from "../doubao/transport.js";
 import { Semaphore } from "./concurrency.js";
 import { ServiceError } from "./errors.js";
 import { MODEL_ENGINE_MAP } from "./models.js";
 import { buildBatches, segmentText } from "./segmenter.js";
 import type { TranslationRequest, TranslationResult } from "./translation-request.js";
-import { AccountPool, isAccountFailure } from "../admin/accounts.js";
-import type { CookieProvider } from "../auth/cookie-store.js";
+import { type AccountSource, isAccountFailure } from "./account-source.js";
+import type { CookieProvider } from "../auth/cookie.js";
 import type { UsageStore, UsageTrace } from "../admin/usage.js";
 
 export class Translator {
   readonly semaphore: Semaphore;
-  constructor(private config: Config, readonly client: DoubaoClient, private pool?: AccountPool, private usage?: UsageStore) {
+  constructor(private config: TranslationConfig, readonly client: DoubaoTransport, private pool?: AccountSource, private usage?: UsageStore) {
     this.semaphore = new Semaphore(config.DOUBAO_MAX_CONCURRENCY, config.DOUBAO_QUEUE_MAX, config.DOUBAO_QUEUE_TIMEOUT_MS);
   }
   async translate(req: TranslationRequest, signal: AbortSignal, provider?: CookieProvider): Promise<TranslationResult> {
@@ -36,7 +36,7 @@ export class Translator {
   }
   private async run(req: TranslationRequest, signal: AbortSignal, trace: UsageTrace, provider?: CookieProvider): Promise<TranslationResult> {
     const start = performance.now();
-    const segments = segmentText(req.rawText);
+    const segments = segmentText(req.rawText, req.sourceFormat);
     const batches = buildBatches(segments.map(x => x.text));
     const output = segments.map(x => x.text);
     const detected = new Set<string>();
@@ -59,8 +59,8 @@ export class Translator {
           const result = await this.client.translate({
             texts: batch.texts, targetLang: req.targetLang, scene: req.scene, engine: MODEL_ENGINE_MAP[req.model],
           }, signal, provider ?? lease?.provider);
-          outputBytes += result.texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0);
-          if (outputBytes > 8 * 1024 * 1024)
+          outputBytes += result.texts.reduce((sum, text) => sum + new TextEncoder().encode(text).byteLength, 0);
+          if (outputBytes > (this.config.DOUBAO_MAX_OUTPUT_BYTES ?? 8 * 1024 * 1024))
             throw new ServiceError("upstream_stream_error", 502, "Translated output exceeds size limit.");
           batch.indexes.forEach((index, i) => { output[index] = result.texts[i]!; });
           result.detectedLanguages.forEach(x => detected.add(x));
@@ -84,7 +84,7 @@ export class Translator {
           }
         } finally { release(); }
         if (!retry) break;
-        if (!switched) await delay(Math.min(250 * 3 ** retries++, 5000) + Math.random() * 100, undefined, { signal });
+        if (!switched) await delay(Math.min(250 * 3 ** retries++, 5000) + Math.random() * 100, signal);
       }
     }
     signal.throwIfAborted();

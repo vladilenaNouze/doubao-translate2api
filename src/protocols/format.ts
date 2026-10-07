@@ -1,8 +1,7 @@
-import { randomUUID } from "node:crypto";
 import type { TranslationResult, Protocol } from "../core/translation-request.js";
 import type { AdaptedRequest } from "./adapter.js";
 
-const id = (prefix: string) => `${prefix}_${randomUUID().replaceAll("-", "")}`;
+const id = (prefix: string) => `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
 const usageChat = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 const usageResponses = {
   input_tokens: 0, input_tokens_details: { cached_tokens: 0 },

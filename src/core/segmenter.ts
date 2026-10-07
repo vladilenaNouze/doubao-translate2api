@@ -1,13 +1,21 @@
 import { invalid } from "./errors.js";
 
 export interface Segment { text: string; separator: string }
-export function segmentText(text: string): Segment[] {
+export function segmentText(text: string, format?: "immersive-translate"): Segment[] {
   if (!text.trim()) throw invalid("Translation input is empty.", "empty_translation_input");
+  if (format && (/^\s*<(?:yaml|text)\b/i.test(text) ||
+      /<\/?(?:html|a|p|div|span|code|pre|h[1-6]|strong|em|br|ul|li|table)\b/i.test(text)))
+    throw invalid("Use the plain-text Immersive Translate template. YAML, XML wrappers and rich HTML are not supported.",
+      "unsupported_input");
   const segments: Segment[] = [];
   const parts = text.split(/((?:\r\n|\r|\n)+)/);
   for (let i = 0; i < parts.length; i += 2) {
     let rest = parts[i] ?? "";
     const separator = parts[i + 1] ?? "";
+    if (format && /^[ \t]*%%[ \t]*$/.test(rest)) {
+      segments.push({ text: "", separator: rest + separator });
+      continue;
+    }
     if (!rest.trim()) {
       if (rest || separator) segments.push({ text: "", separator: rest + separator });
       continue;
@@ -28,6 +36,7 @@ export function segmentText(text: string): Segment[] {
     if (segments.length > 10000) throw invalid("Too many translation segments.");
   }
   if (segments.length > 10000) throw invalid("Too many translation segments.");
+  if (!segments.some(segment => segment.text)) throw invalid("Translation input is empty.", "empty_translation_input");
   return segments;
 }
 

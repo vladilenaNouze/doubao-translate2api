@@ -23,6 +23,7 @@
 | [API 服务源码与部署文档](https://github.com/mu-zi-lee/doubao-translate2api) | 在 NAS 或服务器部署，向多个翻译客户端提供兼容 API |
 | [Docker Hub 镜像](https://hub.docker.com/r/muzileee/doubao-translate2api) | 拉取 `muzileee/doubao-translate2api` 部署 API 服务 |
 | [Magpie 直连插件](https://github.com/mu-zi-lee/opencode-doubao-translate) | 在 Magpie 中导入豆包 Cookie，直接翻译，无须部署 API 服务或 Docker |
+| [Cloudflare Workers 实验版](docs/cloudflare-workers.md) | 在自己的 Cloudflare 账号部署单 Cookie 翻译接口，无需服务器 |
 
 服务版和插件版共用翻译核心，可按使用场景选择。服务版提供管理页、Cookie 池和 API Key；插件版由 Magpie 管理账号与故障切换。
 
@@ -42,6 +43,16 @@ github:mu-zi-lee/opencode-doubao-translate
 </details>
 
 截图使用模拟账号，API Key 保持隐藏。
+
+## Cloudflare Workers 部署
+
+Workers 版本共用翻译核心，提供三种协议和翻译引擎。通过 Cloudflare Secrets 配置 `DOUBAO_COOKIE` 与 `API_KEY`，适合个人接入沉浸式翻译；没有管理后台和多账号池。
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/mu-zi-lee/doubao-translate2api)
+
+实验版已包含本地 Workers 运行时测试，真实 Cloudflare 到豆包请求和扩展联调仍需验收。按钮需要默认分支包含 Workers 实现；尚未同步源码时，可按[新手部署指南](docs/cloudflare-workers.md)使用本地命令部署。
+
+部署页面的构建命令使用 `npm run build:workers`，部署命令使用 `npm run deploy:workers`，项目根目录保持仓库根目录。默认支持沉浸式纯文本 `%%` 分隔格式，暂不支持 YAML 和富文本模板。完整配置、Cookie 获取、接口检查和排错步骤见指南。
 
 ## Docker 部署
 

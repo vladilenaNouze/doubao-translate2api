@@ -51,11 +51,7 @@ export function importCookie(input: string): CookieValue {
     throw invalid("Cookie contains unsafe characters or is empty.");
   }
 }
-export function isAccountFailure(error: unknown): error is ServiceError {
-  return error instanceof ServiceError && (["cookie_missing", "cookie_invalid", "upstream_auth_error",
-    "upstream_timeout", "upstream_network_error"].includes(error.code) ||
-    (["upstream_http_error", "upstream_incomplete_result"].includes(error.code) && error.retryable));
-}
+export { isAccountFailure } from "../core/account-source.js";
 export class AccountPool {
   private state!: State;
   private pending: Promise<unknown> = Promise.resolve();

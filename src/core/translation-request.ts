@@ -10,6 +10,7 @@ export interface TranslationRequest {
   scene: DoubaoScene;
   stream: boolean;
   requestId: string;
+  sourceFormat?: "immersive-translate";
 }
 export interface TranslationResult {
   model: CanonicalModel;

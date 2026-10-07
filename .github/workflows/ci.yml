@@ -22,6 +22,9 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - run: npm run build:workers
+        env:
+          CLOUDFLARE_SEND_METRICS: "false"
       - run: npx playwright install --with-deps chromium
       - run: npm run test:ui
       - run: npm run smoke:local
